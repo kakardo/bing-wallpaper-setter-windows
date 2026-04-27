@@ -15,8 +15,9 @@ param(
 
 Clear-Host
 
-$pictures     = [Environment]::GetFolderPath('MyPictures')
-if (!$pictures -or !(Test-Path $pictures)) { $pictures = "$env:USERPROFILE\Pictures" }
+$pictures = [Environment]::GetFolderPath('MyPictures')
+if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROFILE 'Pictures' }
+if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
 $installDir   = Join-Path $pictures 'BingWallpaper'
 $scriptPath   = Join-Path $installDir 'BingWallpaper.ps1'
 $uninstallDir = Join-Path $installDir 'Uninstall'
@@ -64,10 +65,10 @@ $img  = $api.images[0]
 
 $year     = $img.startdate.Substring(0, 4)
 $month    = $img.startdate.Substring(4, 2)
-$pics     = [Environment]::GetFolderPath('MyPictures')
-if (!$pics -or !(Test-Path $pics)) { $pics = "$env:USERPROFILE\Pictures" }
-$dir      = Join-Path $pics "BingWallpaper\$year\$month"
-if (!(Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
+$pics = [Environment]::GetFolderPath('MyPictures')
+if (!$pics -or !(Test-Path $pics)) { $pics = Join-Path $env:USERPROFILE 'Pictures' }
+$dir  = Join-Path $pics "BingWallpaper\$year\$month"
+if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
 $name = $img.title -replace '[\\/:*?"<>|]', '_'
 $date = "$year-$month-$($img.startdate.Substring(6, 2))"
@@ -102,8 +103,8 @@ try {
     Write-Host ""
 
     Write-Host "Step 1: Creating folders..."
-    if (!(Test-Path $installDir))   { New-Item -ItemType Directory $installDir   -ErrorAction Stop | Out-Null }
-    if (!(Test-Path $uninstallDir)) { New-Item -ItemType Directory $uninstallDir -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $uninstallDir)) { New-Item -ItemType Directory -Path $uninstallDir -Force -ErrorAction Stop | Out-Null }
 
     Write-Host "Step 2: Writing scripts..."
     Set-Content -Path $scriptPath   -Value $wallpaperScript -Encoding UTF8  -ErrorAction Stop
