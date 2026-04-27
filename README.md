@@ -4,11 +4,17 @@ Sets the Bing wallpaper of the day as your Windows desktop background. Runs auto
 
 ---
 
+## ⬇️ Download
+
+**[→ Download Setup.exe](../../releases/latest)**
+
+---
+
 ## Install
 
-1. Download `Setup.exe` from the [Releases](../../releases) page
-2. Double-click it
-3. Done
+1. Go to the [Releases](../../releases/latest) page and download `Setup.exe`
+2. Double-click `Setup.exe`
+3. Done — today's Bing wallpaper is set and it will update automatically at every login
 
 After running, you can delete `Setup.exe`.
 
@@ -59,4 +65,4 @@ Open `Pictures\BingWallpaper\Uninstall\` and double-click **Uninstall BingWallpa
 
 ## How it works
 
-At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no internet connection yet, it retries every 10 seconds for the first minute, then every minute for 1
+At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no internet connection yet, it retries every 10 seconds for the first minute, then every minute for 15 minutes, then every 5 minutes for up to an hour.
