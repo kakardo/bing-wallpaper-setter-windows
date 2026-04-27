@@ -6,11 +6,11 @@ Sets the Bing wallpaper of the day as your Windows desktop background. Runs auto
 
 ## Install
 
-1. Download `Setup.ps1`
-2. Right-click it and choose **Run with PowerShell**
+1. Download `Setup.cmd`
+2. Double-click it
 3. Done
 
-After running, you can delete `Setup.ps1`.
+After running, you can delete `Setup.cmd`.
 
 ### What gets created
 
@@ -41,7 +41,7 @@ A shortcut is also added to your Windows startup folder so the script runs every
 Run from PowerShell if you want a different market or resolution:
 
 ```powershell
-.\Setup.ps1 -Market en-GB -Resolution 3840x2160
+.\Setup.cmd -Market en-GB -Resolution 3840x2160
 ```
 
 | Parameter | Default | Options |
@@ -59,4 +59,4 @@ Open `Pictures\BingWallpaper\Uninstall\` and double-click **Uninstall BingWallpa
 
 ## How it works
 
-At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no internet connection yet, it retries every 10 seconds for the first minute, then every minute for 15 minutes, then every 5 minutes up to 1 hour before giving up.
+At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no internet connection yet, it retries every 10 seconds for the first minute, then every minute for 1
