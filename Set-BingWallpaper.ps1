@@ -19,11 +19,14 @@ public class Win32 {
 $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market"
 $img = $api.images[0]
 
-$dir = "$env:APPDATA\BingWallpaper"
+$year  = $img.startdate.Substring(0, 4)
+$month = $img.startdate.Substring(4, 2)
+$dir   = Join-Path ([Environment]::GetFolderPath('MyPictures')) "BingWallpaper\$year\$month"
 if (!(Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
 
 $name = $img.title -replace '[\\/:*?"<>|]', '_'
-$file = "$dir\$($img.startdate)_${name}_${Resolution}.jpg"
+$date = "$year-$month-$($img.startdate.Substring(6, 2))"
+$file = "$dir\${date}_${name}_${Resolution}.jpg"
 
 if (!(Test-Path $file)) {
     Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file
