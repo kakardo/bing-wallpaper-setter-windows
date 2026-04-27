@@ -6,13 +6,13 @@ Sets the Bing wallpaper of the day as your Windows desktop background. Runs auto
 
 ## ⬇️ Download
 
-**[→ Download Setup.exe](../../releases/latest)**
+**[→ Download Setup.exe](releases/latest)**
 
 ---
 
 ## Install
 
-1. Go to the [Releases](../../releases/latest) page and download `Setup.exe`
+1. Go to the [Releases](releases/latest) page and download `Setup.exe`
 2. Double-click `Setup.exe`
 3. Done — today's Bing wallpaper is set and it will update automatically at every login
 
