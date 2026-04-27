@@ -6,11 +6,11 @@ Sets the Bing wallpaper of the day as your Windows desktop background. Runs auto
 
 ## Install
 
-1. Download `Setup.cmd`
+1. Download `Setup.exe` from the [Releases](../../releases) page
 2. Double-click it
 3. Done
 
-After running, you can delete `Setup.cmd`.
+After running, you can delete `Setup.exe`.
 
 ### What gets created
 
@@ -38,10 +38,10 @@ A shortcut is also added to your Windows startup folder so the script runs every
 
 ## Options
 
-Run from PowerShell if you want a different market or resolution:
+Advanced users can run `Setup.ps1` directly from PowerShell for a different market or resolution:
 
 ```powershell
-.\Setup.cmd -Market en-GB -Resolution 3840x2160
+.\Setup.ps1 -Market en-GB -Resolution 3840x2160
 ```
 
 | Parameter | Default | Options |
