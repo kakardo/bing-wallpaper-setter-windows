@@ -1,10 +1,7 @@
 # @author      Kardo Rostam
 # @date        2026-04-27
 # @description Installs Bing Wallpaper Setter. Creates the wallpaper directory in Pictures,
-#              writes the wallpaper script, adds a one-click uninstaller, and registers
-#              a scheduled task so the wallpaper updates at every logon.
-
-Clear-Host
+#              writes the wallpaper script, adds a one-click uninstaller, and sets up autostart.
 
 param(
     [string]$Market = 'en-US',
@@ -12,7 +9,8 @@ param(
     [string]$Resolution = '1920x1080'
 )
 
-$taskName     = 'BingWallpaperSetter'
+Clear-Host
+
 $pictures     = [Environment]::GetFolderPath('MyPictures')
 if (!$pictures -or !(Test-Path $pictures)) { $pictures = "$env:USERPROFILE\Pictures" }
 $installDir   = Join-Path $pictures 'BingWallpaper'
@@ -33,22 +31,17 @@ param(
     [string]$Resolution = '1920x1080'
 )
 
-Add-Type @"
-using System.Runtime.InteropServices;
-public class Win32 {
-    [DllImport("user32.dll")]
-    public static extern int SystemParametersInfo(int a, int b, string c, int d);
-}
-"@
+$code = 'using System.Runtime.InteropServices; public class Win32 { [DllImport("user32.dll")] public static extern int SystemParametersInfo(int a, int b, string c, int d); }'
+Add-Type -TypeDefinition $code
 
-$api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market"
-$img = $api.images[0]
+$api  = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market"
+$img  = $api.images[0]
 
 $year     = $img.startdate.Substring(0, 4)
 $month    = $img.startdate.Substring(4, 2)
-$pictures = [Environment]::GetFolderPath('MyPictures')
-if (!$pictures -or !(Test-Path $pictures)) { $pictures = "$env:USERPROFILE\Pictures" }
-$dir      = Join-Path $pictures "BingWallpaper\$year\$month"
+$pics     = [Environment]::GetFolderPath('MyPictures')
+if (!$pics -or !(Test-Path $pics)) { $pics = "$env:USERPROFILE\Pictures" }
+$dir      = Join-Path $pics "BingWallpaper\$year\$month"
 if (!(Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
 
 $name = $img.title -replace '[\\/:*?"<>|]', '_'
@@ -68,43 +61,67 @@ Write-Host "Wallpaper set: $($img.title)"
 $uninstallScript = @'
 @echo off
 echo Removing Bing Wallpaper Setter...
-powershell -NonInteractive -ExecutionPolicy Bypass -Command ^
-  "Unregister-ScheduledTask -TaskName 'BingWallpaperSetter' -Confirm:$false -ErrorAction SilentlyContinue; ^
-   Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\BingWallpaper.ps1') -ErrorAction SilentlyContinue"
+powershell -NonInteractive -ExecutionPolicy Bypass -Command "Unregister-ScheduledTask -TaskName 'BingWallpaperSetter' -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('Startup') + '\BingWallpaper.bat') -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\BingWallpaper.ps1') -ErrorAction SilentlyContinue"
 echo.
 echo Done. Your wallpaper photos have been kept.
 echo.
 pause
-cd /d "%USERPROFILE%\Pictures\BingWallpaper"
+cd /d "%USERPROFILE%"
 rmdir /s /q "%~dp0"
 '@
 
 # - Install - - - - - - - - - - - - - - - - - - - - - - - - - #
-Write-Host "Installing Bing Wallpaper Setter..."
-Write-Host ""
+try {
+    Write-Host "Installing Bing Wallpaper Setter..."
+    Write-Host ""
 
-if (!(Test-Path $installDir))   { New-Item -ItemType Directory $installDir   | Out-Null }
-if (!(Test-Path $uninstallDir)) { New-Item -ItemType Directory $uninstallDir | Out-Null }
+    Write-Host "Step 1: Creating folders..."
+    if (!(Test-Path $installDir))   { New-Item -ItemType Directory $installDir   -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $uninstallDir)) { New-Item -ItemType Directory $uninstallDir -ErrorAction Stop | Out-Null }
 
-Set-Content -Path $scriptPath   -Value $wallpaperScript -Encoding UTF8
-Set-Content -Path $uninstallBat -Value $uninstallScript -Encoding ASCII
+    Write-Host "Step 2: Writing scripts..."
+    Set-Content -Path $scriptPath   -Value $wallpaperScript -Encoding UTF8  -ErrorAction Stop
+    Set-Content -Path $uninstallBat -Value $uninstallScript -Encoding ASCII -ErrorAction Stop
 
-$action   = New-ScheduledTaskAction -Execute 'powershell.exe' `
-                -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
-$trigger  = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+    Write-Host "Step 3: Registering autostart..."
+    $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
+    $taskName = 'BingWallpaperSetter'
+    $taskDone = $false
 
-if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-    Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings | Out-Null
-    Write-Host "Scheduled task updated."
-} else {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings | Out-Null
-    Write-Host "Scheduled task created."
+    try {
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
+        $trigger   = New-ScheduledTaskTrigger -AtLogOn
+        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
+        } else {
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
+        }
+        Write-Host "Scheduled task registered."
+        $taskDone = $true
+    } catch {
+        Write-Host "Scheduled task blocked - using startup folder instead."
+    }
+
+    if (!$taskDone) {
+        $startupBat     = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
+        $startupContent = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
+        Set-Content -Path $startupBat -Value $startupContent -Encoding ASCII -ErrorAction Stop
+        Write-Host "Added to startup folder."
+    }
+
+    Write-Host ""
+    Write-Host "Installed to: $installDir"
+    Write-Host "To uninstall: open the Uninstall folder inside BingWallpaper in Pictures."
+    Write-Host ""
+
+    Write-Host "Step 4: Setting today's wallpaper..."
+    & $scriptPath -Market $Market -Resolution $Resolution
+
+} catch {
+    Write-Host ""
+    Write-Host "ERROR: $_" -ForegroundColor Red
 }
 
-Write-Host ""
-Write-Host "Installed to: $installDir"
-Write-Host "To uninstall: open the Uninstall folder inside BingWallpaper in Pictures."
-Write-Host ""
-
-& $scriptPath -Market $Market -Resolution $Resolution
+Read-Host "Press Enter to close"
