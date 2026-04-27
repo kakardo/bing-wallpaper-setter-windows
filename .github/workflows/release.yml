@@ -20,7 +20,7 @@ jobs:
 
       - name: Build Setup.exe
         shell: powershell
-        run: Invoke-ps2exe .\Setup.ps1 .\Setup.exe -title "Bing Wallpaper Setter"
+        run: Invoke-ps2exe .\Setup.ps1 .\Setup.exe -title "Bing Wallpaper Setter" -requireAdmin
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

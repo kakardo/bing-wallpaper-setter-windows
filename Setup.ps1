@@ -9,6 +9,13 @@ param(
     [string]$Resolution = '1920x1080'
 )
 
+# Self-elevate if not running as administrator
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $args = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Market $Market -Resolution $Resolution"
+    Start-Process powershell.exe $args -Verb RunAs
+    exit
+}
+
 Clear-Host
 
 $pictures = [Environment]::GetFolderPath('MyPictures')
