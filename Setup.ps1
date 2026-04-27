@@ -34,7 +34,28 @@ param(
 $code = 'using System.Runtime.InteropServices; public class Win32 { [DllImport("user32.dll")] public static extern int SystemParametersInfo(int a, int b, string c, int d); }'
 Add-Type -TypeDefinition $code
 
-$api  = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market"
+# Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
+$retrySchedule = @(
+    @{ Interval = 10;  Count = 6  },
+    @{ Interval = 60;  Count = 15 },
+    @{ Interval = 300; Count = 9  }
+)
+
+$api = $null
+foreach ($phase in $retrySchedule) {
+    for ($i = 0; $i -lt $phase.Count; $i++) {
+        try {
+            $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop
+            break
+        } catch {
+            Start-Sleep -Seconds $phase.Interval
+        }
+    }
+    if ($api) { break }
+}
+
+if (!$api) { exit }
+
 $img  = $api.images[0]
 
 $year     = $img.startdate.Substring(0, 4)
