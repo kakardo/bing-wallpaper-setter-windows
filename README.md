@@ -8,8 +8,7 @@ Automatic daily wallpaper setter for Windows. Retrieves the Bing wallpaper of th
 
 | File | Purpose |
 |---|---|
-| `Set-BingWallpaper.ps1` | Downloads the latest Bing wallpaper and applies it |
-| `Install-Task.ps1` | Registers a Task Scheduler job so it runs automatically at logon |
+| `Setup.ps1` | One-time setup — installs everything and registers the scheduled task |
 
 ---
 
@@ -23,67 +22,46 @@ Automatic daily wallpaper setter for Windows. Retrieves the Bing wallpaper of th
 
 ## Quick start
 
-1. **Clone or download** this repository to a permanent folder, e.g. `C:\Tools\BingWallpaper`.
+1. **Download** `Setup.ps1` from this repository.
 
-2. **Open PowerShell** in that folder and run the setup script once:
+2. **Right-click** the file and choose **Run with PowerShell**.
 
-   ```powershell
-   .\Install-Task.ps1
-   ```
+   Setup will:
+   - Create `Pictures\BingWallpaper\`
+   - Install the wallpaper script there
+   - Add a one-click uninstaller to `Pictures\BingWallpaper\Uninstall\`
+   - Register a scheduled task so the wallpaper updates at every logon
+   - Set today's wallpaper immediately
 
-   This registers a scheduled task that runs `Set-BingWallpaper.ps1` silently every time you log in. No admin rights required.
-
-3. **Test it immediately** (optional):
-
-   ```powershell
-   Start-ScheduledTask -TaskName 'BingWallpaperSetter'
-   ```
-
-That's it. Your wallpaper will update automatically from now on.
+That's it. You can delete `Setup.ps1` after running it.
 
 ---
 
 ## Options
-
-Both scripts accept optional parameters:
 
 | Parameter | Default | Description |
 |---|---|---|
 | `-Market` | `en-US` | Bing market code (e.g. `en-GB`, `de-DE`, `fr-FR`) |
 | `-Resolution` | `1920x1080` | Image resolution: `1920x1080`, `1366x768`, or `3840x2160` (UHD) |
 
-**Example — UK market at 4K:**
+To install with custom options, run from PowerShell instead:
 
 ```powershell
-.\Install-Task.ps1 -Market en-GB -Resolution 3840x2160
-```
-
----
-
-## Running manually
-
-You can run the wallpaper setter at any time without the scheduled task:
-
-```powershell
-.\Set-BingWallpaper.ps1
+.\Setup.ps1 -Market en-GB -Resolution 3840x2160
 ```
 
 ---
 
 ## Uninstall
 
-To remove the scheduled task:
+Open `Pictures\BingWallpaper\Uninstall\` in Explorer and double-click **Uninstall BingWallpaper.bat**.
 
-```powershell
-.\Install-Task.ps1 -Uninstall
-```
-
-Downloaded wallpapers are stored in `%APPDATA%\BingWallpaper` and can be deleted manually.
+This removes the scheduled task and the wallpaper script. Your saved wallpaper photos are kept.
 
 ---
 
 ## How it works
 
 1. Queries `https://www.bing.com/HPImageArchive.aspx` for today's image metadata.
-2. Downloads the full-resolution JPEG to `%APPDATA%\BingWallpaper` (skips if already present).
+2. Downloads the full-resolution JPEG to `Pictures\BingWallpaper\YYYY\MM\` (skips if already present).
 3. Calls the Windows `SystemParametersInfo` API to apply the image as the desktop wallpaper.
