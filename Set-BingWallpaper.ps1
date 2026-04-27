@@ -1,3 +1,7 @@
+# @author      Kardo Rostam
+# @date        2026-04-27
+# @description Downloads the Bing wallpaper of the day and sets it as the Windows desktop background.
+
 param(
     [string]$Market = 'en-US',
     [ValidateSet('1920x1080','1366x768','3840x2160')]

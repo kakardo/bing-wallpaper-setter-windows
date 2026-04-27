@@ -1,3 +1,7 @@
+# @author      Kardo Rostam
+# @date        2026-04-27
+# @description Registers a Windows Task Scheduler job to run Set-BingWallpaper.ps1 at every logon.
+
 param(
     [string]$Market = 'en-US',
     [ValidateSet('1920x1080','1366x768','3840x2160')]
