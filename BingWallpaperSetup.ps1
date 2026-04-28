@@ -23,8 +23,7 @@ if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROF
 if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
 $installDir   = Join-Path $pictures 'BingWallpaper'
 $scriptPath   = Join-Path $installDir 'BingWallpaper.ps1'
-$statusPs1    = Join-Path $installDir 'Status.ps1'
-$statusBat    = Join-Path $installDir 'Status.bat'
+$statusBat    = Join-Path $installDir 'View_status.bat'
 $logFile      = Join-Path $installDir 'run.log'
 $uninstallDir = Join-Path $installDir 'Uninstall'
 $uninstallBat = Join-Path $uninstallDir 'Uninstall BingWallpaper.bat'
@@ -41,7 +40,7 @@ if (Test-Path $scriptPath) {
 
     $daysRun = 0; $lastRun = 'Never'
     if (Test-Path $logFile) {
-        $logLines = Get-Content $logFile | Where-Object { $_ -match '\S' }
+        $logLines = @(Get-Content $logFile | Where-Object { $_ -match '\S' })
         $daysRun  = ($logLines | Select-Object -Unique).Count
         if ($logLines.Count -gt 0) { $lastRun = ($logLines[-1] -split '\s+')[0] }
     }
@@ -139,48 +138,11 @@ try {
 }
 '@
 
-# - Embedded status script - - - - - - - - - - - - - - - - - #
-
-$statusScript = @'
-# @author      Kardo Rostam
-# @date        2026-04-27
-# @description Shows the current status of Bing Wallpaper Setter.
-
-$dir  = Split-Path $MyInvocation.MyCommand.Path
-$log  = Join-Path $dir 'run.log'
-$task = Get-ScheduledTask -TaskName 'BingWallpaperSetter' -ErrorAction SilentlyContinue
-$startupBat = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
-
-if ($task)                     { $autostart = 'Scheduled task' }
-elseif (Test-Path $startupBat) { $autostart = 'Startup folder' }
-else                           { $autostart = 'Not configured'  }
-
-$daysRun = 0; $lastRun = 'Never'
-if (Test-Path $log) {
-    $lines   = Get-Content $log | Where-Object { $_ -match '\S' }
-    $daysRun = ($lines | Select-Object -Unique).Count
-    if ($lines.Count -gt 0) { $lastRun = ($lines[-1] -split '\s+')[0] }
-}
-
-$count = (Get-ChildItem $dir -Recurse -Filter '*.jpg' -ErrorAction SilentlyContinue | Measure-Object).Count
-
-Write-Host ''
-Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
-Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
-Write-Host ''
-Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green
-Write-Host "  Autostart  : $autostart"
-Write-Host "  Last run   : $lastRun"
-Write-Host "  Days run   : $daysRun"
-Write-Host "  Wallpapers : $count saved"
-Write-Host ''
-'@
-
 # - Embedded status bat - - - - - - - - - - - - - - - - - - - #
 
 $statusBatContent = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Status.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $dr=0; $lr='Never'; if(Test-Path $log){$lines=@(Get-Content $log|Where-Object{$_ -match '\S'}); $dr=($lines|Select-Object -Unique).Count; if($lines.Count -gt 0){$lr=($lines[-1] -split '\s+')[0]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
 pause
 '@
 
@@ -189,7 +151,7 @@ pause
 $uninstallScript = @'
 @echo off
 echo Removing Bing Wallpaper Setter...
-powershell -NonInteractive -ExecutionPolicy Bypass -Command "Unregister-ScheduledTask -TaskName 'BingWallpaperSetter' -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('Startup') + '\BingWallpaper.bat') -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\BingWallpaper.ps1') -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\Status.ps1') -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\Status.bat') -ErrorAction SilentlyContinue"
+powershell -NonInteractive -ExecutionPolicy Bypass -Command "Unregister-ScheduledTask -TaskName 'BingWallpaperSetter' -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('Startup') + '\BingWallpaper.bat') -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\BingWallpaper.ps1') -ErrorAction SilentlyContinue; Remove-Item ([Environment]::GetFolderPath('MyPictures') + '\BingWallpaper\View_status.bat') -ErrorAction SilentlyContinue"
 echo.
 echo Done. Your wallpaper photos and run log have been kept.
 echo.
@@ -210,7 +172,6 @@ try {
 
     Write-Host "Step 2: Writing scripts..."
     Set-Content -Path $scriptPath   -Value $wallpaperScript  -Encoding UTF8  -ErrorAction Stop
-    Set-Content -Path $statusPs1    -Value $statusScript     -Encoding UTF8  -ErrorAction Stop
     Set-Content -Path $statusBat    -Value $statusBatContent -Encoding ASCII -ErrorAction Stop
     Set-Content -Path $uninstallBat -Value $uninstallScript  -Encoding ASCII -ErrorAction Stop
 
@@ -244,7 +205,7 @@ try {
 
     Write-Host ""
     Write-Host "Installed to: $installDir"
-    Write-Host "To check status: open Status.bat in the BingWallpaper folder."
+    Write-Host "To check status: open View_status.bat in the BingWallpaper folder."
     Write-Host "To uninstall: open the Uninstall folder inside BingWallpaper in Pictures."
     Write-Host ""
 

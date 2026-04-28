@@ -24,8 +24,7 @@ After running, you can delete `BingWallpaperSetup.exe`.
 Pictures\
 └── BingWallpaper\
     ├── BingWallpaper.ps1        (runs at startup)
-    ├── Status.bat               (check status at any time)
-    ├── Status.ps1
+    ├── View_status.bat          (check status at any time)
     ├── run.log                  (one entry per day)
     ├── Uninstall\
     │   └── Uninstall BingWallpaper.bat
@@ -66,6 +65,4 @@ Open `Pictures\BingWallpaper\Uninstall\` and double-click **Uninstall BingWallpa
 
 ## How it works
 
-At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no internet connection yet, it retries every 10 seconds for the first minute, then every minute for 15 minutes, then every 5 minutes for up to an hour.
-
-Running `BingWallpaperSetup.exe` again on an already-installed machine shows the current status: autostart method, last run date, total days run, and wallpapers saved.
+At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no intern
