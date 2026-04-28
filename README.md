@@ -6,17 +6,17 @@ Sets the Bing wallpaper of the day as your Windows desktop background. Runs auto
 
 ## ⬇️ Download
 
-**[→ Download Setup.exe](https://github.com/kakardo/bing-wallpaper-setter-windows/releases/latest)**
+**[→ Download BingWallpaperSetup.exe](https://github.com/kakardo/bing-wallpaper-setter-windows/releases/latest)**
 
 ---
 
 ## Install
 
-1. Go to the [Releases](https://github.com/kakardo/bing-wallpaper-setter-windows/releases/latest) page and download `Setup.exe`
-2. Double-click `Setup.exe`
+1. Go to the [Releases](https://github.com/kakardo/bing-wallpaper-setter-windows/releases/latest) page and download `BingWallpaperSetup.exe`
+2. Double-click `BingWallpaperSetup.exe`
 3. Done — today's Bing wallpaper is set and it will update automatically at every login
 
-After running, you can delete `Setup.exe`.
+After running, you can delete `BingWallpaperSetup.exe`.
 
 ### What gets created
 
@@ -24,14 +24,15 @@ After running, you can delete `Setup.exe`.
 Pictures\
 └── BingWallpaper\
     ├── BingWallpaper.ps1        (runs at startup)
+    ├── Status.bat               (check status at any time)
+    ├── Status.ps1
+    ├── run.log                  (one entry per day)
     ├── Uninstall\
     │   └── Uninstall BingWallpaper.bat
     └── YYYY\
         └── MM\
             └── YYYY-MM-DD_Wallpaper title_WIDTHxHEIGHT.jpg
 ```
-
-A shortcut is also added to your Windows startup folder so the script runs every time you log in.
 
 ---
 
@@ -44,10 +45,10 @@ A shortcut is also added to your Windows startup folder so the script runs every
 
 ## Options
 
-Advanced users can run `Setup.ps1` directly from PowerShell for a different market or resolution:
+Advanced users can run `BingWallpaperSetup.ps1` directly from PowerShell for a different market or resolution:
 
 ```powershell
-.\Setup.ps1 -Market en-GB -Resolution 3840x2160
+.\BingWallpaperSetup.ps1 -Market en-GB -Resolution 3840x2160
 ```
 
 | Parameter | Default | Options |
@@ -59,10 +60,12 @@ Advanced users can run `Setup.ps1` directly from PowerShell for a different mark
 
 ## Uninstall
 
-Open `Pictures\BingWallpaper\Uninstall\` and double-click **Uninstall BingWallpaper.bat**. Your saved wallpapers are kept.
+Open `Pictures\BingWallpaper\Uninstall\` and double-click **Uninstall BingWallpaper.bat**. Your saved wallpapers and run log are kept.
 
 ---
 
 ## How it works
 
 At logon, `BingWallpaper.ps1` calls the Bing image API, downloads today's wallpaper to `Pictures\BingWallpaper\YYYY\MM\`, and applies it via the Windows `SystemParametersInfo` API. If there is no internet connection yet, it retries every 10 seconds for the first minute, then every minute for 15 minutes, then every 5 minutes for up to an hour.
+
+Running `BingWallpaperSetup.exe` again on an already-installed machine shows the current status: autostart method, last run date, total days run, and wallpapers saved.
