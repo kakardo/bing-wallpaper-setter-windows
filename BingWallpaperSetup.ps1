@@ -85,8 +85,8 @@ param(
     [switch]$SetLockScreen
 )
 
-$code = 'using System.Runtime.InteropServices; public class Win32 { [DllImport("user32.dll")] public static extern int SystemParametersInfo(int a, int b, string c, int d); }'
-Add-Type -TypeDefinition $code
+$wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT(uint monitorIndex, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); for (uint i = 0; i < count; i++) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); } return (int)count; } catch { return 0; } } }'
+if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
 # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
 $retrySchedule = @(
@@ -130,11 +130,11 @@ try {
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
         if ((Get-Item $file).Length -eq 0) { Remove-Item $file; exit }
     }
-    $result = [Win32]::SystemParametersInfo(20, 0, $file, 3)
-    if ($result -eq 0) {
-        Write-Host "Warning: wallpaper set call returned failure."
+    $set = [WallpaperHelper]::SetOnAllMonitors($file)
+    if ($set -eq 0) {
+        Write-Host "Warning: could not set wallpaper on any monitor."
     } else {
-        Write-Host "Wallpaper set: $($img.title)"
+        Write-Host "Wallpaper set on $set monitor(s): $($img.title)"
         $logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
         if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
         $log = Join-Path $logDir 'run.log'
