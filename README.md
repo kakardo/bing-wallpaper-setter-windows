@@ -1,5 +1,7 @@
 # Bing Wallpaper Setter for Windows
 
+[![Download](https://img.shields.io/github/v/release/kakardo/bing-wallpaper-setter-windows?label=Download&style=for-the-badge)](https://github.com/kakardo/bing-wallpaper-setter-windows/releases/latest)
+
 Automatically downloads the Bing wallpaper of the day and sets it as your Windows desktop background. Optionally updates the lock screen too.
 
 ## Installation
@@ -27,10 +29,10 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Updates the wallpaper on all connected monitors.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\`.
 - Optional lock screen wallpaper update (primary monitor only).
-
-> **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
 - Retries automatically if the network is unavailable at startup.
 - Uninstaller in `Pictures\BingWallpaper\Uninstall\`.
+
+> **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
 
 ## Status and management
 
@@ -64,5 +66,4 @@ Run `Uninstall BingWallpaper.bat` inside `Pictures\BingWallpaper\Uninstall\`. Th
 ## Requirements
 
 - Windows 10 or 11
-- PowerShell 5.1 (included with Windows)
-- Internet access at logon
+- 
