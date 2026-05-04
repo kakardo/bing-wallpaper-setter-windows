@@ -1,5 +1,5 @@
 # @author      Kardo Rostam
-# @date        2026-04-27
+# @date        2026-04-28
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
 
@@ -24,7 +24,8 @@ if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path 
 $installDir   = Join-Path $pictures 'BingWallpaper'
 $scriptPath   = Join-Path $installDir 'BingWallpaper.ps1'
 $statusBat    = Join-Path $installDir 'View_status.bat'
-$logFile      = Join-Path $installDir 'run.log'
+$logsDir      = Join-Path $installDir 'Logs'
+$logFile      = Join-Path $logsDir 'run.log'
 $uninstallDir = Join-Path $installDir 'Uninstall'
 $uninstallBat = Join-Path $uninstallDir 'Uninstall BingWallpaper.bat'
 
@@ -37,6 +38,8 @@ if (Test-Path $scriptPath) {
     if ($task)                         { $autostart = 'Scheduled task' }
     elseif (Test-Path $startupBatPath) { $autostart = 'Startup folder' }
     else                               { $autostart = 'Not configured'  }
+
+    $lockScreen = if ($task -and ($task.Actions | ForEach-Object { $_.Arguments }) -match 'SetLockScreen') { 'Enabled' } else { 'Disabled' }
 
     $daysRun = 0; $lastRun = 'Never'
     if (Test-Path $logFile) {
@@ -53,6 +56,7 @@ if (Test-Path $scriptPath) {
     Write-Host ''
     Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green
     Write-Host "  Autostart  : $autostart"
+    Write-Host "  Lock screen: $lockScreen"
     Write-Host "  Last run   : $lastRun"
     Write-Host "  Days run   : $daysRun"
     Write-Host "  Wallpapers : $wallpaperCount saved"
@@ -70,13 +74,15 @@ if (Test-Path $scriptPath) {
 
 $wallpaperScript = @'
 # @author      Kardo Rostam
-# @date        2026-04-27
-# @description Downloads the Bing wallpaper of the day and sets it as the Windows desktop background.
+# @date        2026-04-28
+# @description Downloads the Bing wallpaper of the day and sets it as the Windows desktop
+#              background, and optionally the lock screen.
 
 param(
     [string]$Market = 'en-US',
     [ValidateSet('1920x1080','1366x768','3840x2160')]
-    [string]$Resolution = '1920x1080'
+    [string]$Resolution = '1920x1080',
+    [switch]$SetLockScreen
 )
 
 $code = 'using System.Runtime.InteropServices; public class Win32 { [DllImport("user32.dll")] public static extern int SystemParametersInfo(int a, int b, string c, int d); }'
@@ -129,8 +135,21 @@ try {
         Write-Host "Warning: wallpaper set call returned failure."
     } else {
         Write-Host "Wallpaper set: $($img.title)"
-        $log = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'run.log'
+        $logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
+        if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+        $log = Join-Path $logDir 'run.log'
         "$date  $($img.title)" | Add-Content $log -Encoding UTF8
+    }
+    if ($SetLockScreen) {
+        try {
+            $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+            if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+            Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $file
+            Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $file
+            Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
+        } catch {
+            Write-Host "Warning: could not set lock screen: $_"
+        }
     }
 } catch {
     if (Test-Path $file) { Remove-Item $file }
@@ -142,7 +161,7 @@ try {
 
 $statusBatContent = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $dr=0; $lr='Never'; if(Test-Path $log){$lines=@(Get-Content $log|Where-Object{$_ -match '\S'}); $dr=($lines|Select-Object -Unique).Count; if($lines.Count -gt 0){$lr=($lines[-1] -split '\s+')[0]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'Logs\run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $ls=if($task -and $task.Actions[0].Arguments-match'SetLockScreen'){'Enabled'}else{'Disabled'}; $dr=0; $lr='Never'; if(Test-Path $log){$lines=@(Get-Content $log|Where-Object{$_ -match '\S'}); $dr=($lines|Select-Object -Unique).Count; if($lines.Count -gt 0){$lr=($lines[-1] -split '\s+')[0]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Lock screen: '+$ls); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
 pause
 '@
 
@@ -168,6 +187,7 @@ try {
 
     Write-Host "Step 1: Creating folders..."
     if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $uninstallDir)) { New-Item -ItemType Directory -Path $uninstallDir -Force -ErrorAction Stop | Out-Null }
 
     Write-Host "Step 2: Writing scripts..."
@@ -175,16 +195,24 @@ try {
     Set-Content -Path $statusBat    -Value $statusBatContent -Encoding ASCII -ErrorAction Stop
     Set-Content -Path $uninstallBat -Value $uninstallScript  -Encoding ASCII -ErrorAction Stop
 
+    Write-Host ""
+    Write-Host "  Also update lock screen wallpaper? [Y/n]: " -NoNewline
+    $lsAnswer      = (Read-Host).Trim().ToUpper()
+    $setLockScreen = $lsAnswer -ne 'N'
+    Write-Host ""
+
     Write-Host "Step 3: Registering autostart..."
     $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
+    if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
 
     try {
+        $runLevel  = if ($setLockScreen) { 'Highest' } else { 'Limited' }
         $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
         $trigger   = New-ScheduledTaskTrigger -AtLogOn
         $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
             Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
         } else {
@@ -199,6 +227,7 @@ try {
     if (!$taskDone) {
         $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
         $startupContent = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
+        if ($setLockScreen) { $startupContent += ' -SetLockScreen' }
         Set-Content -Path $startupBatPath -Value $startupContent -Encoding ASCII -ErrorAction Stop
         Write-Host "Added to startup folder."
     }
@@ -210,9 +239,18 @@ try {
     Write-Host ""
 
     Write-Host "Step 4: Setting today's wallpaper..."
-    & $scriptPath -Market $Market -Resolution $Resolution
+    if ($setLockScreen) {
+        & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen
+    } else {
+        & $scriptPath -Market $Market -Resolution $Resolution
+    }
+
+    Write-Host ""
+    Read-Host "  Press Enter to close"
 
 } catch {
     Write-Host ""
     Write-Host "ERROR: $_" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "  Press Enter to close"
 }
