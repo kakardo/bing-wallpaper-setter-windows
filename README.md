@@ -5,7 +5,7 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
 ## Installation
 
 1. Download `BingWallpaperSetup.exe` from the [latest release](../../releases/latest).
-2. Run it. Windows may show a SmartScreen warning — see below.
+2. Run it. Windows may show a SmartScreen warning (see below).
 3. Follow the on-screen prompts. The installer will:
    - Ask whether to also update the lock screen wallpaper.
    - Register a scheduled task that runs at logon.
@@ -24,10 +24,13 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 ## Features
 
 - Downloads the daily Bing wallpaper at logon.
+- Updates the wallpaper on all connected monitors.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\`.
-- Optional lock screen wallpaper update (set during installation).
+- Optional lock screen wallpaper update (primary monitor only).
+
+> **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
 - Retries automatically if the network is unavailable at startup.
-- Uninstaller included — find it in `Pictures\BingWallpaper\Uninstall\`.
+- Uninstaller in `Pictures\BingWallpaper\Uninstall\`.
 
 ## Status and management
 
