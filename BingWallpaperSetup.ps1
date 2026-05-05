@@ -43,9 +43,9 @@ if (Test-Path $scriptPath) {
 
     $daysRun = 0; $lastRun = 'Never'
     if (Test-Path $logFile) {
-        $logLines = @(Get-Content $logFile | Where-Object { $_ -match '\S' })
-        $daysRun  = ($logLines | Select-Object -Unique).Count
-        if ($logLines.Count -gt 0) { $lastRun = ($logLines[-1] -split '\s+')[0] }
+        $starts  = @(Get-Content $logFile | Where-Object { $_ -match '\] Start$' })
+        $daysRun = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
+        if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $lastRun = $Matches[1] }
     }
 
     $wallpaperCount = (Get-ChildItem $installDir -Recurse -Filter '*.jpg' -ErrorAction SilentlyContinue | Measure-Object).Count
@@ -88,6 +88,12 @@ param(
 $wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT(uint monitorIndex, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); for (uint i = 0; i < count; i++) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); } return (int)count; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
+$logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
+if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$log = Join-Path $logDir 'run.log'
+function Write-Log($msg) { "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] $msg" | Add-Content $log -Encoding UTF8 }
+Write-Log 'Start'
+
 # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
 $retrySchedule = @(
     @{ Interval = 10;  Count = 6  },
@@ -96,19 +102,22 @@ $retrySchedule = @(
 )
 
 $api = $null
+$attempt = 0
 foreach ($phase in $retrySchedule) {
     for ($i = 0; $i -lt $phase.Count; $i++) {
         try {
             $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop
             break
         } catch {
+            $attempt++
+            Write-Log "Retry $attempt: waiting $($phase.Interval)s"
             Start-Sleep -Seconds $phase.Interval
         }
     }
     if ($api) { break }
 }
 
-if (!$api) { exit }
+if (!$api) { Write-Log 'Error: API unreachable after all retries'; exit }
 
 $img   = $api.images[0]
 $year  = $img.startdate.Substring(0, 4)
@@ -128,17 +137,16 @@ $file = "$dir\${date}_${name}_${Resolution}.jpg"
 try {
     if (!(Test-Path $file)) {
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
-        if ((Get-Item $file).Length -eq 0) { Remove-Item $file; exit }
+        if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: download failed (0 bytes)'; exit }
+        Write-Log "DL: ${date}_${name}_${Resolution}.jpg"
     }
     $set = [WallpaperHelper]::SetOnAllMonitors($file)
     if ($set -eq 0) {
+        Write-Log 'Error: WP set returned 0 monitors'
         Write-Host "Warning: could not set wallpaper on any monitor."
     } else {
+        Write-Log "WP: $set monitor(s) - $($img.title)"
         Write-Host "Wallpaper set on $set monitor(s): $($img.title)"
-        $logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
-        if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-        $log = Join-Path $logDir 'run.log'
-        "$date  $($img.title)" | Add-Content $log -Encoding UTF8
     }
     if ($SetLockScreen) {
         try {
@@ -147,11 +155,14 @@ try {
             Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $file
             Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $file
             Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
+            Write-Log 'LS: updated'
         } catch {
+            Write-Log "Error: LS failed - $_"
             Write-Host "Warning: could not set lock screen: $_"
         }
     }
 } catch {
+    Write-Log "Error: $_"
     if (Test-Path $file) { Remove-Item $file }
     exit
 }
@@ -161,7 +172,7 @@ try {
 
 $statusBatContent = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'Logs\run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $ls=if($task -and $task.Actions[0].Arguments-match'SetLockScreen'){'Enabled'}else{'Disabled'}; $dr=0; $lr='Never'; if(Test-Path $log){$lines=@(Get-Content $log|Where-Object{$_ -match '\S'}); $dr=($lines|Select-Object -Unique).Count; if($lines.Count -gt 0){$lr=($lines[-1] -split '\s+')[0]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Lock screen: '+$ls); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'Logs\run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $ls=if($task -and $task.Actions[0].Arguments-match'SetLockScreen'){'Enabled'}else{'Disabled'}; $dr=0; $lr='Never'; if(Test-Path $log){$st=@(Get-Content $log|Where-Object{$_ -match '\] Start$'}); $dr=($st|ForEach-Object{if($_-match'\[(\d{4}-\d{2}-\d{2})'){$Matches[1]}}|Select-Object -Unique).Count; if($st.Count-gt 0-and $st[-1]-match'\[(\d{4}-\d{2}-\d{2})'){$lr=$Matches[1]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Lock screen: '+$ls); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
 pause
 '@
 
