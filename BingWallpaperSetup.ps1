@@ -43,7 +43,7 @@ if (Test-Path $scriptPath) {
 
     $daysRun = 0; $lastRun = 'Never'
     if (Test-Path $logFile) {
-        $starts  = @(Get-Content $logFile | Where-Object { $_ -match '\] Start$' })
+        $starts  = @(Get-Content $logFile | Where-Object { $_ -match '\] Started$' })
         $daysRun = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
         if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $lastRun = $Matches[1] }
     }
@@ -92,7 +92,7 @@ $logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'run.log'
 function Write-Log($msg) { "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] $msg" | Add-Content $log -Encoding UTF8 }
-Write-Log 'Start'
+Write-Log 'Started'
 
 # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
 $retrySchedule = @(
@@ -110,7 +110,7 @@ foreach ($phase in $retrySchedule) {
             break
         } catch {
             $attempt++
-            Write-Log "Retry $attempt: waiting $($phase.Interval)s"
+            Write-Log "Network unavailable, retrying in $($phase.Interval)s (attempt $attempt) - $_"
             Start-Sleep -Seconds $phase.Interval
         }
     }
@@ -137,15 +137,15 @@ $file = "$dir\${date}_${name}_${Resolution}.jpg"
 try {
     if (!(Test-Path $file)) {
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
-        if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: download failed (0 bytes)'; exit }
-        Write-Log "DL: ${date}_${name}_${Resolution}.jpg"
+        if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
+        Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
     }
     $set = [WallpaperHelper]::SetOnAllMonitors($file)
     if ($set -eq 0) {
-        Write-Log 'Error: WP set returned 0 monitors'
+        Write-Log 'Error: wallpaper set failed on all monitors'
         Write-Host "Warning: could not set wallpaper on any monitor."
     } else {
-        Write-Log "WP: $set monitor(s) - $($img.title)"
+        Write-Log "Wallpaper set | Monitors: $set | $($img.title)"
         Write-Host "Wallpaper set on $set monitor(s): $($img.title)"
     }
     if ($SetLockScreen) {
@@ -155,9 +155,8 @@ try {
             Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $file
             Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $file
             Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
-            Write-Log 'LS: updated'
         } catch {
-            Write-Log "Error: LS failed - $_"
+            Write-Log "Error: lock screen update failed - $_"
             Write-Host "Warning: could not set lock screen: $_"
         }
     }
@@ -172,7 +171,7 @@ try {
 
 $statusBatContent = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'Logs\run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $ls=if($task -and $task.Actions[0].Arguments-match'SetLockScreen'){'Enabled'}else{'Disabled'}; $dr=0; $lr='Never'; if(Test-Path $log){$st=@(Get-Content $log|Where-Object{$_ -match '\] Start$'}); $dr=($st|ForEach-Object{if($_-match'\[(\d{4}-\d{2}-\d{2})'){$Matches[1]}}|Select-Object -Unique).Count; if($st.Count-gt 0-and $st[-1]-match'\[(\d{4}-\d{2}-\d{2})'){$lr=$Matches[1]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Lock screen: '+$ls); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { param([string]$p); $dir=$p.TrimEnd('\'); $log=Join-Path $dir 'Logs\run.log'; $task=Get-ScheduledTask -TaskName 'BingWallpaperSetter' -EA SilentlyContinue; $sb=Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'; if($task){$a='Scheduled task'}elseif(Test-Path $sb){$a='Startup folder'}else{$a='Not configured'}; $ls=if($task -and $task.Actions[0].Arguments-match'SetLockScreen'){'Enabled'}else{'Disabled'}; $dr=0; $lr='Never'; if(Test-Path $log){$st=@(Get-Content $log|Where-Object{$_ -match '\] Started$'}); $dr=($st|ForEach-Object{if($_-match'\[(\d{4}-\d{2}-\d{2})'){$Matches[1]}}|Select-Object -Unique).Count; if($st.Count-gt 0-and $st[-1]-match'\[(\d{4}-\d{2}-\d{2})'){$lr=$Matches[1]}}; $c=(Get-ChildItem $dir -Recurse -Filter '*.jpg' -EA SilentlyContinue|Measure-Object).Count; Write-Host ''; Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan; Write-Host ('  '+([string][char]0x2500*36)) -ForegroundColor DarkGray; Write-Host ''; Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green; Write-Host ('  Autostart  : '+$a); Write-Host ('  Lock screen: '+$ls); Write-Host ('  Last run   : '+$lr); Write-Host ('  Days run   : '+$dr); Write-Host ('  Wallpapers : '+$c+' saved'); Write-Host '' } '%~dp0'"
 pause
 '@
 
