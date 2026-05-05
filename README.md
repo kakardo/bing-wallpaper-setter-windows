@@ -6,7 +6,7 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
 
 ## Installation
 
-1. Download `BingWallpaperSetup.exe` from the [latest release](../../releases/latest).
+1. Download `BingWallpaperSetup_v[version].exe` from the [latest release](../../releases/latest).
 2. Run it. Windows may show a SmartScreen warning (see below).
 3. Follow the on-screen prompts. The installer will:
    - Ask whether to also update the lock screen wallpaper.
@@ -43,7 +43,7 @@ Open `Pictures\BingWallpaper\View_status.bat` to see:
 - Last run date
 - Number of wallpapers saved
 
-To reinstall or change settings, run `BingWallpaperSetup.exe` again.
+To reinstall or change settings, download and run the latest setup file.
 
 ## Parameters
 

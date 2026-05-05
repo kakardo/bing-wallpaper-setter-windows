@@ -18,11 +18,11 @@ jobs:
         shell: powershell
         run: Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
 
-      - name: Build BingWallpaperSetup.exe
+      - name: Build BingWallpaperSetup_${{ github.ref_name }}.exe
         shell: powershell
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v') + '.0'
-          Invoke-ps2exe .\BingWallpaperSetup.ps1 .\BingWallpaperSetup.exe `
+          Invoke-ps2exe .\BingWallpaperSetup.ps1 ".\BingWallpaperSetup_${{ github.ref_name }}.exe" `
             -title "Bing Wallpaper Setter for Windows" `
             -description "Setup and management tool for Bing Wallpaper Setter. By Kardo Rostam." `
             -product "Bing Wallpaper Setter for Windows" `
@@ -32,5 +32,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: BingWallpaperSetup.exe
+          files: BingWallpaperSetup_v*.exe
           generate_release_notes: true
