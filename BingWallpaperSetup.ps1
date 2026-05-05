@@ -192,8 +192,7 @@ echo.
 echo Done. Your wallpaper photos and run log have been kept.
 echo.
 set "UNINST=%~dp0"
-cd /d "%USERPROFILE%"
-rmdir /s /q "%UNINST%"
+start "" /b cmd /c "timeout /t 2 /nobreak >nul & rmdir /s /q ""%UNINST%"""
 pause
 '@
 
