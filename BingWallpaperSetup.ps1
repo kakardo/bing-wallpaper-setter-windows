@@ -1,7 +1,14 @@
 # @author      Kardo Rostam
 # @date        2026-04-28
+# @version     1.7
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
+#
+# Credits
+# -------
+# Icon: "Bing social network brand" by Darius Dan
+#       https://icon-icons.com/icon/bing-social-network-brand-logo/79088
+#       Licensed under CC BY 4.0
 
 param(
     [string]$Market = 'en-US',
