@@ -1,6 +1,6 @@
 # @author      Kardo Rostam
 # @date        2026-04-28
-# @version     1.7
+# @version     1.8
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
 #

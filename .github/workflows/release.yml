@@ -22,7 +22,7 @@ jobs:
         shell: powershell
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v') + '.0'
-          Invoke-ps2exe .\BingWallpaperSetup.ps1 ".\BingWallpaperSetup_${{ github.ref_name }}.exe" `
+          Invoke-ps2exe .\BingWallpaperSetup.ps1 ".\BingWallpaperSetup_${{ github.ref_name }}.exe" -iconFile .\assets\1486051840-bingsocialnetworkbrandlogo_79088.ico `
             -title "Bing Wallpaper Setter for Windows" `
             -description "Setup and management tool for Bing Wallpaper Setter. By Kardo Rostam." `
             -product "Bing Wallpaper Setter for Windows" `
