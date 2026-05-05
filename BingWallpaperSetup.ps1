@@ -152,8 +152,8 @@ try {
         Write-Log 'Error: wallpaper set failed on all monitors'
         Write-Host "Warning: could not set wallpaper on any monitor."
     } else {
-        Write-Log "Wallpaper set | Monitors: $set | $($img.title)"
-        Write-Host "Wallpaper set on $set monitor(s): $($img.title)"
+        Write-Log "Wallpaper set | Monitors: $set | `"$($img.title)`""
+        Write-Host "Wallpaper set on $set monitor(s): `"$($img.title)`""
     }
     if ($SetLockScreen) {
         try {
@@ -191,9 +191,10 @@ powershell -NonInteractive -ExecutionPolicy Bypass -Command "Unregister-Schedule
 echo.
 echo Done. Your wallpaper photos and run log have been kept.
 echo.
-pause
+set "UNINST=%~dp0"
 cd /d "%USERPROFILE%"
-rmdir /s /q "%~dp0"
+rmdir /s /q "%UNINST%"
+pause
 '@
 
 # - Install - - - - - - - - - - - - - - - - - - - - - - - - - #
