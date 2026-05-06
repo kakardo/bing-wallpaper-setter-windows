@@ -99,7 +99,6 @@ $logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'run.log'
 function Write-Log($msg) { "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] $msg" | Add-Content $log -Encoding UTF8 }
-Write-Log 'Started'
 
 # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
 $retrySchedule = @(
@@ -142,20 +141,24 @@ $date = "$year-$month-$day"
 $file = "$dir\${date}_${name}_${Resolution}.jpg"
 
 try {
-    if (!(Test-Path $file)) {
+    $isNew = !(Test-Path $file)
+    if ($isNew) {
+        Write-Log 'Started'
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
         if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
-    }
-    $set = [WallpaperHelper]::SetOnAllMonitors($file)
-    if ($set -eq 0) {
-        Write-Log 'Error: wallpaper set failed on all monitors'
-        Write-Host "Warning: could not set wallpaper on any monitor."
+        $set = [WallpaperHelper]::SetOnAllMonitors($file)
+        if ($set -eq 0) {
+            Write-Log 'Error: wallpaper set failed on all monitors'
+            Write-Host "Warning: could not set wallpaper on any monitor."
+        } else {
+            Write-Log "Wallpaper set | Monitors: $set | `"$($img.title)`""
+            Write-Host "Wallpaper set on $set monitor(s): `"$($img.title)`""
+        }
     } else {
-        Write-Log "Wallpaper set | Monitors: $set | `"$($img.title)`""
-        Write-Host "Wallpaper set on $set monitor(s): `"$($img.title)`""
+        Write-Log 'Started | No new wallpaper today'
     }
-    if ($SetLockScreen) {
+    if ($SetLockScreen -and $isNew) {
         try {
             $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
             if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
