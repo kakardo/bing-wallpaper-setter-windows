@@ -87,10 +87,17 @@ $wallpaperScript = @'
 
 param(
     [string]$Market = 'en-US',
-    [ValidateSet('1920x1080','1366x768','3840x2160')]
-    [string]$Resolution = '1920x1080',
+    [string]$Resolution = '',
     [switch]$SetLockScreen
 )
+
+if (!$Resolution) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $w = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
+    $Resolution = if ($w -ge 3840) { '3840x2160' } elseif ($w -ge 1920) { '1920x1080' } else { '1366x768' }
+} elseif ($Resolution -notin '1920x1080','1366x768','3840x2160') {
+    Write-Log "Error: unsupported resolution '$Resolution'"; exit
+}
 
 $wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); int active = 0; for (uint i = 0; i < count; i++) { try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); if (r.right - r.left > 0 && r.bottom - r.top > 0) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } } catch { } } return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
@@ -152,11 +159,13 @@ try {
             Write-Log 'Error: wallpaper set failed on all monitors'
             Write-Host "Warning: could not set wallpaper on any monitor."
         } else {
-            Write-Log "Wallpaper set | Monitors: $set | `"$($img.title)`""
-            Write-Host "Wallpaper set on $set monitor(s): `"$($img.title)`""
+            $title = if ($img.title) { $img.title } else { 'Untitled' }
+            Write-Log "Wallpaper set | Monitors: $set | `"$title`""
+            Write-Host "Wallpaper set on $set monitor(s): `"$title`""
         }
     } else {
         Write-Log 'Started | No new wallpaper today'
+        Write-Host "Wallpaper is already up to date."
     }
     if ($SetLockScreen -and $isNew) {
         try {
@@ -169,6 +178,8 @@ try {
             Write-Log "Error: lock screen update failed - $_"
             Write-Host "Warning: could not set lock screen: $_"
         }
+    } elseif ($SetLockScreen -and !$isNew) {
+        Write-Log 'Lock screen skipped | No new wallpaper today'
     }
 } catch {
     Write-Log "Error: $_"
@@ -222,7 +233,8 @@ try {
     Write-Host ""
 
     Write-Host "Step 3: Registering autostart..."
-    $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
+    $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
+    if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution $Resolution" }
     if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
@@ -246,7 +258,8 @@ try {
 
     if (!$taskDone) {
         $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
-        $startupContent = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market -Resolution $Resolution"
+        $startupContent = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
+        if ($PSBoundParameters.ContainsKey('Resolution')) { $startupContent += " -Resolution $Resolution" }
         if ($setLockScreen) { $startupContent += ' -SetLockScreen' }
         Set-Content -Path $startupBatPath -Value $startupContent -Encoding ASCII -ErrorAction Stop
         Write-Host "Added to startup folder."
@@ -260,9 +273,9 @@ try {
 
     Write-Host "Step 4: Setting today's wallpaper..."
     if ($setLockScreen) {
-        & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen
+        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen } else { & $scriptPath -Market $Market -SetLockScreen }
     } else {
-        & $scriptPath -Market $Market -Resolution $Resolution
+        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution } else { & $scriptPath -Market $Market }
     }
 
     Write-Host ""
