@@ -214,19 +214,25 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-$taskName   = 'BingWallpaperSetter'
-$scriptPath = Join-Path $InstallDir 'BingWallpaper.ps1'
-$logFile    = Join-Path $InstallDir 'Logs\run.log'
+$taskName      = 'BingWallpaperSetter'
+$scriptPath    = Join-Path $InstallDir 'BingWallpaper.ps1'
+$logFile       = Join-Path $InstallDir 'Logs\run.log'
+$startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 
 function Get-TaskConfig {
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
-    if (!$task) { return $null }
-    $a = $task.Actions[0].Arguments
+    $a = $null; $source = $null
+    if ($task) {
+        $a = $task.Actions[0].Arguments; $source = 'task'
+    } elseif (Test-Path $startupBatPath) {
+        $a = Get-Content $startupBatPath; $source = 'startup'
+    }
+    if (!$a) { return $null }
     $market     = if ($a -match '-Market\s+(\S+)')     { $Matches[1] } else { 'en-US' }
     $resolution = if ($a -match '-Resolution\s+(\S+)') { $Matches[1] } else { '' }
     $lockScreen = [bool]($a -match '-SetLockScreen')
     $logCap     = if ($a -match '-LogCap\s+(\S+)') { $Matches[1] } else { '0' }
-    return @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap }
+    return @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; Source = $source }
 }
 
 function Build-Args($market, $resolution, $lockScreen, $logCap) {
@@ -239,19 +245,22 @@ function Build-Args($market, $resolution, $lockScreen, $logCap) {
 
 function Update-Task($market, $resolution, $lockScreen, $logCap = '0') {
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
-    if (!$task) { Write-Host '  Error: scheduled task not found.' -ForegroundColor Red; Start-Sleep 2; return }
-    $runLevel  = if ($lockScreen) { 'Highest' } else { 'Limited' }
-    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen $logCap)
-    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
-    Set-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -EA Stop | Out-Null
+    if ($task) {
+        $runLevel  = if ($lockScreen) { 'Highest' } else { 'Limited' }
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen $logCap)
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        Set-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -EA Stop | Out-Null
+    } elseif (Test-Path $startupBatPath) {
+        Set-Content -Path $startupBatPath -Value "powershell.exe $(Build-Args $market $resolution $lockScreen $logCap)" -Encoding ASCII
+    } else {
+        Write-Host '  Error: no autostart method found.' -ForegroundColor Red; Start-Sleep 2
+    }
 }
 
 function Show-Status {
     Clear-Host
     $cfg  = Get-TaskConfig
-    $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
-    $sb   = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
-    $autostart  = if ($task) { 'Scheduled task' } elseif (Test-Path $sb) { 'Startup folder' } else { 'Not configured' }
+    $autostart  = if (!$cfg) { 'Not configured' } elseif ($cfg.Source -eq 'task') { 'Scheduled task' } else { 'Startup folder' }
     $market     = if ($cfg) { $cfg.Market } else { 'Unknown' }
     $resolution = if ($cfg -and $cfg.Resolution) { $cfg.Resolution } else { 'Auto-detect' }
     $lockScreen    = if ($cfg -and $cfg.LockScreen) { 'Enabled' } else { 'Disabled' }
@@ -281,17 +290,31 @@ function Show-Status {
     Write-Host "  Wallpapers : $wallpaperCount saved"
     Write-Host ''
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+    if ($cfg -and $cfg.Source -eq 'startup') {
+        Write-Host ''
+        Write-Host '  Note: running via startup folder. Lock screen control' -ForegroundColor Yellow
+        Write-Host '  is unavailable. Use [T] to try switching to scheduled task.' -ForegroundColor Yellow
+    }
     Write-Host ''
     Write-Host '  [L] Toggle lock screen   [M] Change market' -ForegroundColor DarkGray
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
     Write-Host '  [G] Log cap              [U] Uninstall' -ForegroundColor DarkGray
-    Write-Host '  [X] Exit' -ForegroundColor DarkGray
+    if ($cfg -and $cfg.Source -eq 'startup') {
+        Write-Host '  [T] Try scheduled task   [X] Exit' -ForegroundColor DarkGray
+    } else {
+        Write-Host '  [X] Exit' -ForegroundColor DarkGray
+    }
     Write-Host ''
 }
 
 function Toggle-LockScreen {
     $cfg = Get-TaskConfig
-    if (!$cfg) { Write-Host '  No scheduled task found.' -ForegroundColor Red; Start-Sleep 2; return }
+    if (!$cfg) { Write-Host '  No autostart configuration found.' -ForegroundColor Red; Start-Sleep 2; return }
+    if ($cfg.Source -eq 'startup') {
+        Write-Host '  Lock screen update requires the scheduled task (runs elevated).' -ForegroundColor Yellow
+        Write-Host '  Reinstall to enable this feature.' -ForegroundColor DarkGray
+        Start-Sleep 3; return
+    }
     $newLock = -not $cfg.LockScreen
     Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap
     $state = if ($newLock) { 'enabled' } else { 'disabled' }
@@ -514,6 +537,27 @@ function Show-LogCapMenu {
     }
 }
 
+function Try-ScheduledTask {
+    $cfg = Get-TaskConfig
+    if (!$cfg) { Write-Host '  No configuration found.' -ForegroundColor Red; Start-Sleep 2; return }
+    Write-Host '  Attempting to register scheduled task...' -ForegroundColor DarkGray
+    try {
+        $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap)
+        $trigger   = New-ScheduledTaskTrigger -AtLogOn
+        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -EA Stop | Out-Null
+        Remove-Item $startupBatPath -EA SilentlyContinue
+        Write-Host '  Scheduled task registered. Startup folder entry removed.' -ForegroundColor Green
+        Write-Host '  Lock screen control is now available.' -ForegroundColor Green
+    } catch {
+        Write-Host "  Failed: $_" -ForegroundColor Red
+        Write-Host '  Startup folder entry kept.' -ForegroundColor DarkGray
+    }
+    Start-Sleep 3
+}
+
 # Main loop
 while ($true) {
     Show-Status
@@ -524,6 +568,7 @@ while ($true) {
         'R' { Show-ResolutionMenu }
         'W' { Run-Now }
         'G' { Show-LogCapMenu }
+        'T' { Try-ScheduledTask }
         'U' { Invoke-Uninstall }
         'X' { exit }
     }
