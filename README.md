@@ -17,7 +17,7 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
 
 When you first run the EXE, Windows Defender SmartScreen may show:
 
-> *"Windows protected your PC — Microsoft Defender SmartScreen prevented an unrecognised app from starting."*
+> *"Windows protected your PC. Microsoft Defender SmartScreen prevented an unrecognized app from starting."*
 
 This is expected. The EXE is unsigned (no paid code-signing certificate), so Windows flags it until the file builds a reputation. The source code is fully visible in this repository.
 
@@ -30,20 +30,38 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\`.
 - Optional lock screen wallpaper update (primary monitor only).
 - Retries automatically if the network is unavailable at startup.
-- Uninstaller in `Pictures\BingWallpaper\Uninstall\`.
+- `Settings.bat` for management and uninstall.
 
 > **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
 
 ## Status and management
 
-Open `Pictures\BingWallpaper\View_status.bat` to see:
+Open `Pictures\BingWallpaper\Settings.bat` to manage the wallpaper setter.
 
-- Autostart method (scheduled task or startup folder)
-- Lock screen: enabled or disabled
-- Last run date
-- Number of wallpapers saved
+```
+Settings
+├── [L] Toggle lock screen
+├── [M] Change market
+│       ├── [1-8] Preset markets
+│       ├── [C]   Custom (validated against Bing)
+│       └── [B]   Back
+├── [R] Change resolution
+│       ├── [1] Auto-detect
+│       ├── [2] 1920x1080  (Full HD)
+│       ├── [3] 3840x2160  (4K)
+│       ├── [4] 1366x768   (HD)
+│       └── [B]   Back
+├── [G] Log cap
+│       ├── [1] Off
+│       ├── [2] By size  (100 KB / 500 KB / 1 MB / custom)
+│       ├── [3] By rows  (500 / 1 000 / 5 000 / custom)
+│       └── [B]   Back
+├── [W] Run now
+├── [U] Uninstall
+└── [X] Exit
+```
 
-To reinstall or change settings, download and run the latest setup file.
+Market and resolution changes take effect at the next logon, or immediately via **[W] Run now**.
 
 ## Parameters
 
@@ -52,7 +70,8 @@ To reinstall or change settings, download and run the latest setup file.
 | Parameter | Default | Options |
 |-----------|---------|---------|
 | `-Market` | `en-US` | Any Bing market code, e.g. `en-GB`, `nb-NO` |
-| `-Resolution` | `1920x1080` | `1920x1080`, `1366x768`, `3840x2160` |
+| `-Resolution` | Auto-detect | `1920x1080`, `1366x768`, `3840x2160` |
+| `-SetLockScreen` | Off | Switch. Also updates the lock screen |
 
 Example:
 ```powershell
@@ -61,9 +80,10 @@ Example:
 
 ## Uninstall
 
-Run `Uninstall BingWallpaper.bat` inside `Pictures\BingWallpaper\Uninstall\`. This removes the scheduled task and script files. Your saved wallpaper photos and run log are kept.
+Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts are removed. Your wallpaper photos and run log stay.
 
 ## Requirements
 
 - Windows 10 or 11
-- 
+- PowerShell 5.1 or later (built-in on Windows 10/11)
+- An internet connection. If unavailable at logon, the script retries automatically for up to an hour.
