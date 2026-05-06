@@ -40,37 +40,25 @@ $logFile     = Join-Path $logsDir 'run.log'
 if (Test-Path $scriptPath) {
     $task           = Get-ScheduledTask -TaskName 'BingWallpaperSetter' -ErrorAction SilentlyContinue
     $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
-
-    if ($task)                         { $autostart = 'Scheduled task' }
-    elseif (Test-Path $startupBatPath) { $autostart = 'Startup folder' }
-    else                               { $autostart = 'Not configured'  }
-
-    $lockScreen = if ($task -and ($task.Actions | ForEach-Object { $_.Arguments }) -match 'SetLockScreen') { 'Enabled' } else { 'Disabled' }
-
-    $market     = if ($task -and $task.Actions[0].Arguments -match '-Market\s+(\S+)')     { $Matches[1] } else { 'en-US' }
-    $resolution = if ($task -and $task.Actions[0].Arguments -match '-Resolution\s+(\S+)') { $Matches[1] } else { 'Auto-detect' }
-
-    $daysRun = 0; $lastRun = 'Never'
-    if (Test-Path $logFile) {
-        $starts  = @(Get-Content $logFile | Where-Object { $_ -match '\] Started' })
-        $daysRun = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
-        if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $lastRun = $Matches[1] }
-    }
-
-    $wallpaperCount = (Get-ChildItem $installDir -Recurse -Filter '*.jpg' -ErrorAction SilentlyContinue | Measure-Object).Count
+    $hasAutostart   = $task -or (Test-Path $startupBatPath)
+    $hasSettings    = Test-Path $settingsPs1
+    $partialInstall = -not $hasAutostart -or -not $hasSettings
 
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green
-    Write-Host "  Autostart  : $autostart"
-    Write-Host "  Market     : $market"
-    Write-Host "  Resolution : $resolution"
-    Write-Host "  Lock screen: $lockScreen"
-    Write-Host "  Last run   : $lastRun"
-    Write-Host "  Days run   : $daysRun"
-    Write-Host "  Wallpapers : $wallpaperCount saved"
+
+    if ($partialInstall) {
+        Write-Host '  Warning: installation appears incomplete.' -ForegroundColor Yellow
+        if (-not $hasSettings)  { Write-Host '  Settings.ps1 is missing.' -ForegroundColor DarkGray }
+        if (-not $hasAutostart) { Write-Host '  No autostart method found.' -ForegroundColor DarkGray }
+        Write-Host '  A reinstall is recommended.' -ForegroundColor Yellow
+    } else {
+        Write-Host '  Bing Wallpaper Setter is installed.' -ForegroundColor Green
+        Write-Host "  Open Settings.bat in $installDir to manage it."
+    }
+
     Write-Host ''
     Write-Host '  [R] Reinstall   [X] Exit' -ForegroundColor DarkGray
     Write-Host ''
@@ -399,15 +387,20 @@ function Show-ResolutionMenu {
 function Run-Now {
     Write-Host '  Running wallpaper update...' -ForegroundColor DarkGray
     $cfg    = Get-TaskConfig
-    $psArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+    $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
     if ($cfg) {
         $psArgs += " -Market $($cfg.Market)"
         if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
         if ($cfg.LockScreen)  { $psArgs += ' -SetLockScreen' }
+        if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
     }
-    Start-Process powershell -ArgumentList $psArgs -Wait
-    Write-Host '  Done.' -ForegroundColor Green
-    Start-Sleep 1
+    Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+    Write-Host ''
+    if (Test-Path $logFile) {
+        Get-Content $logFile | Select-Object -Last 2 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    }
+    Write-Host ''
+    Start-Sleep 2
 }
 
 function Invoke-Uninstall {
