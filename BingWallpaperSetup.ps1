@@ -29,9 +29,10 @@ $pictures = [Environment]::GetFolderPath('MyPictures')
 if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROFILE 'Pictures' }
 if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
 $installDir  = Join-Path $pictures 'BingWallpaper'
-$scriptPath  = Join-Path $installDir 'BingWallpaper.ps1'
+$scriptsDir  = Join-Path $installDir 'scripts'
+$scriptPath  = Join-Path $scriptsDir 'BingWallpaper.ps1'
 $settingsBat = Join-Path $installDir 'Settings.bat'
-$settingsPs1 = Join-Path $installDir 'Settings.ps1'
+$settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
 $logsDir     = Join-Path $installDir 'Logs'
 $logFile     = Join-Path $logsDir 'run.log'
 
@@ -200,7 +201,7 @@ try {
 
 $settingsBatContent = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Settings.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Settings.ps1"
 '@
 
 # - Embedded Settings.ps1 - - - - - - - - - - - - - - - - - - #
@@ -215,7 +216,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 $taskName      = 'BingWallpaperSetter'
-$scriptPath    = Join-Path $InstallDir 'BingWallpaper.ps1'
+$scriptPath    = Join-Path $InstallDir 'scripts\BingWallpaper.ps1'
 $logFile       = Join-Path $InstallDir 'Logs\run.log'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 
@@ -439,11 +440,11 @@ function Invoke-Uninstall {
     if ($confirm -ne 'YES') { return }
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -EA SilentlyContinue
     Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat') -EA SilentlyContinue
-    Remove-Item $scriptPath -EA SilentlyContinue
     Write-Host ''
     Write-Host '  Uninstalled. This window will close shortly.' -ForegroundColor Green
-    $batPath = Join-Path $InstallDir 'Settings.bat'
-    Start-Process cmd -ArgumentList "/c timeout /t 3 /nobreak >nul & del /f /q `"$PSCommandPath`" & del /f /q `"$batPath`"" -WindowStyle Hidden
+    $batPath     = Join-Path $InstallDir 'Settings.bat'
+    $scriptsPath = Join-Path $InstallDir 'scripts'
+    Start-Process cmd -ArgumentList "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`"" -WindowStyle Hidden
     Start-Sleep 3
     exit
 }
@@ -583,6 +584,7 @@ try {
 
     Write-Host "Step 1: Creating folders..."
     if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
 
     Write-Host "Step 2: Writing scripts..."
