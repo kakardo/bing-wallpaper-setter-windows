@@ -29,7 +29,7 @@ $pictures = [Environment]::GetFolderPath('MyPictures')
 if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROFILE 'Pictures' }
 if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
 $installDir  = Join-Path $pictures 'BingWallpaper'
-$scriptsDir  = Join-Path $installDir 'scripts'
+$scriptsDir  = Join-Path $installDir 'Scripts'
 $scriptPath  = Join-Path $scriptsDir 'BingWallpaper.ps1'
 $settingsBat = Join-Path $installDir 'Settings.bat'
 $settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
@@ -96,7 +96,7 @@ if (!$Resolution) {
 $wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); int active = 0; for (uint i = 0; i < count; i++) { try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); if (r.right - r.left > 0 && r.bottom - r.top > 0) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } } catch { } } return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
-$logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
+$logDir = Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'Logs'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'run.log'
 function Write-Log($msg) {
@@ -201,7 +201,7 @@ try {
 
 $settingsBatContent = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Settings.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Scripts\Settings.ps1"
 '@
 
 # - Embedded Settings.ps1 - - - - - - - - - - - - - - - - - - #
@@ -216,7 +216,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 $taskName      = 'BingWallpaperSetter'
-$scriptPath    = Join-Path $InstallDir 'scripts\BingWallpaper.ps1'
+$scriptPath    = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
 $logFile       = Join-Path $InstallDir 'Logs\run.log'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 
@@ -443,7 +443,7 @@ function Invoke-Uninstall {
     Write-Host ''
     Write-Host '  Uninstalled. This window will close shortly.' -ForegroundColor Green
     $batPath     = Join-Path $InstallDir 'Settings.bat'
-    $scriptsPath = Join-Path $InstallDir 'scripts'
+    $scriptsPath = Join-Path $InstallDir 'Scripts'
     Start-Process cmd -ArgumentList "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`"" -WindowStyle Hidden
     Start-Sleep 3
     exit
