@@ -92,7 +92,8 @@ $wallpaperScript = @'
 param(
     [string]$Market = 'en-US',
     [string]$Resolution = '',
-    [switch]$SetLockScreen
+    [switch]$SetLockScreen,
+    [string]$LogCap = '0'
 )
 
 if (!$Resolution) {
@@ -109,7 +110,22 @@ if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 $logDir = Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'Logs'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'run.log'
-function Write-Log($msg) { "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] $msg" | Add-Content $log -Encoding UTF8 }
+function Write-Log($msg) {
+    "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] $msg" | Add-Content $log -Encoding UTF8
+    if ($LogCap -ne '0' -and (Test-Path $log)) {
+        if ($LogCap -match '^(\d+)KB$') {
+            $maxBytes = [int]$Matches[1] * 1024
+            if ((Get-Item $log).Length -gt $maxBytes) {
+                $lines = Get-Content $log
+                $lines | Select-Object -Last ([math]::Floor($lines.Count * 0.8)) | Set-Content $log -Encoding UTF8
+            }
+        } elseif ($LogCap -match '^(\d+)R$') {
+            $maxRows = [int]$Matches[1]
+            $lines = Get-Content $log
+            if ($lines.Count -gt $maxRows) { $lines | Select-Object -Last $maxRows | Set-Content $log -Encoding UTF8 }
+        }
+    }
+}
 
 # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
 $retrySchedule = @(
@@ -221,21 +237,23 @@ function Get-TaskConfig {
     $market     = if ($a -match '-Market\s+(\S+)')     { $Matches[1] } else { 'en-US' }
     $resolution = if ($a -match '-Resolution\s+(\S+)') { $Matches[1] } else { '' }
     $lockScreen = [bool]($a -match '-SetLockScreen')
-    return @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen }
+    $logCap     = if ($a -match '-LogCap\s+(\S+)') { $Matches[1] } else { '0' }
+    return @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap }
 }
 
-function Build-Args($market, $resolution, $lockScreen) {
+function Build-Args($market, $resolution, $lockScreen, $logCap) {
     $a = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $market"
     if ($resolution) { $a += " -Resolution $resolution" }
     if ($lockScreen)  { $a += ' -SetLockScreen' }
+    if ($logCap -and $logCap -ne '0') { $a += " -LogCap $logCap" }
     return $a
 }
 
-function Update-Task($market, $resolution, $lockScreen) {
+function Update-Task($market, $resolution, $lockScreen, $logCap = '0') {
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     if (!$task) { Write-Host '  Error: scheduled task not found.' -ForegroundColor Red; Start-Sleep 2; return }
     $runLevel  = if ($lockScreen) { 'Highest' } else { 'Limited' }
-    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen)
+    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen $logCap)
     $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
     Set-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -EA Stop | Out-Null
 }
@@ -248,7 +266,11 @@ function Show-Status {
     $autostart  = if ($task) { 'Scheduled task' } elseif (Test-Path $sb) { 'Startup folder' } else { 'Not configured' }
     $market     = if ($cfg) { $cfg.Market } else { 'Unknown' }
     $resolution = if ($cfg -and $cfg.Resolution) { $cfg.Resolution } else { 'Auto-detect' }
-    $lockScreen = if ($cfg -and $cfg.LockScreen) { 'Enabled' } else { 'Disabled' }
+    $lockScreen    = if ($cfg -and $cfg.LockScreen) { 'Enabled' } else { 'Disabled' }
+    $logCapDisplay = if (!$cfg -or !$cfg.LogCap -or $cfg.LogCap -eq '0') { 'Off' } `
+                     elseif ($cfg.LogCap -match '^(\d+)KB$') { "$($Matches[1]) KB" } `
+                     elseif ($cfg.LogCap -match '^(\d+)R$')  { "$($Matches[1]) rows" } `
+                     else { 'Off' }
     $daysRun = 0; $lastRun = 'Never'
     if (Test-Path $logFile) {
         $starts  = @(Get-Content $logFile | Where-Object { $_ -match '\] Started' })
@@ -265,6 +287,7 @@ function Show-Status {
     Write-Host "  Market     : $market"
     Write-Host "  Resolution : $resolution"
     Write-Host "  Lock screen: $lockScreen"
+    Write-Host "  Log cap    : $logCapDisplay"
     Write-Host "  Last run   : $lastRun"
     Write-Host "  Days run   : $daysRun"
     Write-Host "  Wallpapers : $wallpaperCount saved"
@@ -273,7 +296,8 @@ function Show-Status {
     Write-Host ''
     Write-Host '  [L] Toggle lock screen   [M] Change market' -ForegroundColor DarkGray
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
-    Write-Host '  [U] Uninstall            [X] Exit' -ForegroundColor DarkGray
+    Write-Host '  [G] Log cap              [U] Uninstall' -ForegroundColor DarkGray
+    Write-Host '  [X] Exit' -ForegroundColor DarkGray
     Write-Host ''
 }
 
@@ -281,7 +305,7 @@ function Toggle-LockScreen {
     $cfg = Get-TaskConfig
     if (!$cfg) { Write-Host '  No scheduled task found.' -ForegroundColor Red; Start-Sleep 2; return }
     $newLock = -not $cfg.LockScreen
-    Update-Task $cfg.Market $cfg.Resolution $newLock
+    Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap
     $state = if ($newLock) { 'enabled' } else { 'disabled' }
     Write-Host "  Lock screen $state." -ForegroundColor Green
     Start-Sleep 1
@@ -334,7 +358,7 @@ function Show-MarketMenu {
             if ($idx -ge 0 -and $idx -lt $markets.Count) { $newMarket = $markets[$idx].Code } else { continue }
         } else { continue }
         if ($newMarket) {
-            Update-Task $newMarket $cfg.Resolution $cfg.LockScreen
+            Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap
             Write-Host "  Market updated to $newMarket." -ForegroundColor Green
             Start-Sleep 1; return
         }
@@ -364,7 +388,7 @@ function Show-ResolutionMenu {
             '1' { '' }; '2' { '1920x1080' }; '3' { '3840x2160' }; '4' { '1366x768' }; default { $null }
         }
         if ($null -ne $newRes) {
-            Update-Task $cfg.Market $newRes $cfg.LockScreen
+            Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap
             $display = if ($newRes) { $newRes } else { 'Auto-detect' }
             Write-Host "  Resolution set to $display." -ForegroundColor Green
             Start-Sleep 1; return
@@ -408,6 +432,95 @@ function Invoke-Uninstall {
     exit
 }
 
+function Show-LogCapMenu {
+    while ($true) {
+        $cfg     = Get-TaskConfig
+        $current = if (!$cfg -or !$cfg.LogCap -or $cfg.LogCap -eq '0') { 'Off' } `
+                   elseif ($cfg.LogCap -match '^(\d+)KB$') { "$($Matches[1]) KB" } `
+                   elseif ($cfg.LogCap -match '^(\d+)R$')  { "$($Matches[1]) rows" } `
+                   else { 'Off' }
+        Clear-Host
+        Write-Host ''
+        Write-Host '  Log cap' -ForegroundColor Cyan
+        Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+        Write-Host "  Current: $current"
+        Write-Host ''
+        Write-Host '  [1] Off'
+        Write-Host '  [2] By size'
+        Write-Host '  [3] By rows'
+        Write-Host ''
+        Write-Host '  [B] Back' -ForegroundColor DarkGray
+        Write-Host ''
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        if ($choice -eq 'B') { return }
+        if ($choice -eq '1') {
+            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0'
+            Write-Host '  Log cap disabled.' -ForegroundColor Green
+            Start-Sleep 1; return
+        }
+        if ($choice -eq '2') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  Log cap - Size' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $current"
+                Write-Host ''
+                Write-Host '  [1] 100 KB'
+                Write-Host '  [2] 500 KB'
+                Write-Host '  [3] 1 MB'
+                Write-Host '  [C] Custom (enter KB)'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newCap = switch ($sub) { '1' { '100KB' }; '2' { '500KB' }; '3' { '1024KB' }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter size in KB').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -gt 0) { $newCap = "${entry}KB" }
+                    else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
+                }
+                if ($newCap) {
+                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap
+                    Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    Start-Sleep 1; return
+                }
+            }
+        }
+        if ($choice -eq '3') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  Log cap - Rows' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $current"
+                Write-Host ''
+                Write-Host '  [1] 500 rows'
+                Write-Host '  [2] 1 000 rows'
+                Write-Host '  [3] 5 000 rows'
+                Write-Host '  [C] Custom (enter number)'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newCap = switch ($sub) { '1' { '500R' }; '2' { '1000R' }; '3' { '5000R' }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter number of rows').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -gt 0) { $newCap = "${entry}R" }
+                    else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
+                }
+                if ($newCap) {
+                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap
+                    Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    Start-Sleep 1; return
+                }
+            }
+        }
+    }
+}
+
 # Main loop
 while ($true) {
     Show-Status
@@ -417,6 +530,7 @@ while ($true) {
         'M' { Show-MarketMenu }
         'R' { Show-ResolutionMenu }
         'W' { Run-Now }
+        'G' { Show-LogCapMenu }
         'U' { Invoke-Uninstall }
         'X' { exit }
     }
