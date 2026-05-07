@@ -177,16 +177,29 @@ try {
             Write-Log "Wallpaper set | Monitors: $set | `"$title`""
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
             try {
-                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ WallpaperCount = 0; DaysRun = 0; LastRun = '' } }
+                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' } } }
+                $now   = Get-Date
+                $today = $now.ToString('yyyy-MM-dd')
+                $stats.TimesRun++
+                if ($stats.LastRun.Date -ne $today) { $stats.DaysRun++ }
+                $stats.LastRun = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
                 $stats.WallpaperCount++
-                $today = (Get-Date).ToString('yyyy-MM-dd')
-                if ($stats.LastRun -ne $today) { $stats.DaysRun++; $stats.LastRun = $today }
-                $stats | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
+                $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss') }
+                $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
             } catch {}
         }
     } else {
         if (!$Install) { Write-Log 'Started | Already up to date' }
         Write-Host "Wallpaper is already up to date."
+        try {
+            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' } } }
+            $now   = Get-Date
+            $today = $now.ToString('yyyy-MM-dd')
+            $stats.TimesRun++
+            if ($stats.LastRun.Date -ne $today) { $stats.DaysRun++ }
+            $stats.LastRun = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
+            $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
+        } catch {}
     }
     if ($SetLockScreen -and $isNew) {
         try {
@@ -288,10 +301,12 @@ function Show-Status {
                      elseif ($cfg.LogCap -match '^(\d+)KB$') { "$($Matches[1]) KB" } `
                      elseif ($cfg.LogCap -match '^(\d+)R$')  { "$($Matches[1]) rows" } `
                      else { 'Off' }
-    $stats          = $script:cachedStats
-    $wallpaperCount = if ($stats) { $stats.WallpaperCount } else { 'Unknown (run [C] to calculate)' }
-    $daysRun        = if ($stats) { $stats.DaysRun }        else { 0 }
-    $lastRun        = if ($stats -and $stats.LastRun) { $stats.LastRun } else { 'Never' }
+    $stats           = $script:cachedStats
+    $wallpaperCount  = if ($stats) { $stats.WallpaperCount } else { 'Unknown (run [C] to calculate)' }
+    $daysRun         = if ($stats) { $stats.DaysRun } else { 0 }
+    $timesRun        = if ($stats) { $stats.TimesRun } else { 0 }
+    $lastRun         = if ($stats -and $stats.LastRun -and $stats.LastRun.Date) { "$($stats.LastRun.Date) $($stats.LastRun.Time)" } else { 'Never' }
+    $lastDownloaded  = if ($stats -and $stats.LastDownloaded -and $stats.LastDownloaded.Title) { "$($stats.LastDownloaded.Title) ($($stats.LastDownloaded.Date) $($stats.LastDownloaded.Time))" } else { 'Never' }
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
@@ -302,9 +317,11 @@ function Show-Status {
     Write-Host "  Resolution : $resolution"
     Write-Host "  Lock screen: $lockScreen"
     Write-Host "  Log cap    : $logCapDisplay"
-    Write-Host "  Last run   : $lastRun"
+    Write-Host "  Times run  : $timesRun"
     Write-Host "  Days run   : $daysRun"
+    Write-Host "  Last run   : $lastRun"
     Write-Host "  Wallpapers : $wallpaperCount saved"
+    Write-Host "  Downloaded : $lastDownloaded"
     Write-Host ''
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
@@ -594,9 +611,9 @@ function Try-ScheduledTask {
 function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
     $count  = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue).Count
-    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ WallpaperCount = 0; DaysRun = 0; LastRun = '' } }
+    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' } } }
     $stats.WallpaperCount = $count
-    $stats | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
+    $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
     $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
     Write-Host '  Done.' -ForegroundColor Green
     Start-Sleep 1
@@ -633,7 +650,7 @@ try {
     if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path (Join-Path $logsDir 'Stats.json'))) {
-        [PSCustomObject]@{ WallpaperCount = 0; DaysRun = 0; LastRun = '' } | ConvertTo-Json | Set-Content (Join-Path $logsDir 'Stats.json') -Encoding UTF8
+        [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' } } | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $logsDir 'Stats.json') -Encoding UTF8
     }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
 
