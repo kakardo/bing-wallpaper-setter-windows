@@ -189,7 +189,7 @@ try {
             } catch {}
         }
     } else {
-        if (!$Install) { Write-Log 'Started | Already up to date' }
+        if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
         Write-Host "Wallpaper is already up to date."
         try {
             $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' } } }
@@ -212,8 +212,8 @@ try {
             Write-Log "Error: lock screen update failed - $_"
             Write-Host "Warning: could not set lock screen: $_"
         }
-    } elseif ($SetLockScreen -and !$isNew) {
-        Write-Log 'Lock screen skipped | Already up to date'
+    } elseif ($isNew -and !$SetLockScreen) {
+        if ($Install) { Write-Log 'Lock screen skipped | Not enabled' }
     }
     if ($Install) { Write-Log 'Installation complete' }
 } catch {
