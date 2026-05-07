@@ -593,11 +593,10 @@ function Try-ScheduledTask {
 
 function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
-    $count   = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue).Count
-    $starts  = @(Get-Content $logFile -EA SilentlyContinue | Where-Object { $_ -match '\] Started' })
-    $days    = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
-    $last    = if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { '' }
-    [PSCustomObject]@{ WallpaperCount = $count; DaysRun = $days; LastRun = $last } | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
+    $count  = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue).Count
+    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ WallpaperCount = 0; DaysRun = 0; LastRun = '' } }
+    $stats.WallpaperCount = $count
+    $stats | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
     $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
     Write-Host '  Done.' -ForegroundColor Green
     Start-Sleep 1
@@ -633,6 +632,9 @@ try {
     if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path (Join-Path $logsDir 'Stats.json'))) {
+        [PSCustomObject]@{ WallpaperCount = 0; DaysRun = 0; LastRun = '' } | ConvertTo-Json | Set-Content (Join-Path $logsDir 'Stats.json') -Encoding UTF8
+    }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
 
     Write-Host "Step 2: Writing scripts..."
