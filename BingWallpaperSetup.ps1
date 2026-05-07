@@ -1,6 +1,6 @@
 # @author      Kardo Rostam
 # @date        2026-04-28
-# @version     2.1
+# @version     2.3
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
 #
@@ -82,8 +82,11 @@ param(
     [string]$Market = 'en-US',
     [string]$Resolution = '',
     [switch]$SetLockScreen,
-    [string]$LogCap = '0'
+    [string]$LogCap = '0',
+    [switch]$Install
 )
+
+$logPrefix = if ($Install) { '[INSTALL] ' } else { '' }
 
 if (!$Resolution) {
     Add-Type -AssemblyName System.Windows.Forms
@@ -100,7 +103,7 @@ $logDir = Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'Logs
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'run.log'
 function Write-Log($msg) {
-    "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] $msg" | Add-Content $log -Encoding UTF8
+    "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg" | Add-Content $log -Encoding UTF8
     if ($LogCap -ne '0' -and (Test-Path $log)) {
         if ($LogCap -match '^(\d+)KB$') {
             $maxBytes = [int]$Matches[1] * 1024
@@ -159,7 +162,7 @@ $file = "$dir\${date}_${name}_${Resolution}.jpg"
 try {
     $isNew = !(Test-Path $file)
     if ($isNew) {
-        Write-Log 'Started'
+        Write-Log (if ($Install) { 'Installation started' } else { 'Started' })
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
         if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
@@ -173,7 +176,7 @@ try {
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
         }
     } else {
-        Write-Log 'Started | No new wallpaper today'
+        Write-Log (if ($Install) { 'Installation started | Already up to date' } else { 'Started | Already up to date' })
         Write-Host "Wallpaper is already up to date."
     }
     if ($SetLockScreen -and $isNew) {
@@ -188,8 +191,9 @@ try {
             Write-Host "Warning: could not set lock screen: $_"
         }
     } elseif ($SetLockScreen -and !$isNew) {
-        Write-Log 'Lock screen skipped | No new wallpaper today'
+        Write-Log 'Lock screen skipped | Already up to date'
     }
+    if ($Install) { Write-Log 'Installation complete' }
 } catch {
     Write-Log "Error: $_"
     if (Test-Path $file) { Remove-Item $file }
@@ -638,9 +642,9 @@ try {
 
     Write-Host "Step 4: Setting today's wallpaper..."
     if ($setLockScreen) {
-        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen } else { & $scriptPath -Market $Market -SetLockScreen }
+        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen -Install } else { & $scriptPath -Market $Market -SetLockScreen -Install }
     } else {
-        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution } else { & $scriptPath -Market $Market }
+        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -Install } else { & $scriptPath -Market $Market -Install }
     }
 
     Write-Host ""
