@@ -234,7 +234,10 @@ $logFile        = Join-Path $InstallDir 'Data\run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 
+$script:cachedConfig = $null
+
 function Get-TaskConfig {
+    if ($null -ne $script:cachedConfig) { return $script:cachedConfig }
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     $a = $null; $source = $null
     if ($task) {
@@ -247,7 +250,8 @@ function Get-TaskConfig {
     $resolution = if ($a -match '-Resolution\s+(\S+)') { $Matches[1] } else { '' }
     $lockScreen = [bool]($a -match '-SetLockScreen')
     $logCap     = if ($a -match '-LogCap\s+(\S+)') { $Matches[1] } else { '0' }
-    return @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; Source = $source }
+    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; Source = $source }
+    return $script:cachedConfig
 }
 
 function Build-Args($market, $resolution, $lockScreen, $logCap) {
@@ -259,6 +263,7 @@ function Build-Args($market, $resolution, $lockScreen, $logCap) {
 }
 
 function Update-Task($market, $resolution, $lockScreen, $logCap = '0') {
+    $script:cachedConfig = $null
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     if ($task) {
         $runLevel  = if ($lockScreen) { 'Highest' } else { 'Limited' }
