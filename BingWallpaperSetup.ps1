@@ -23,6 +23,9 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+# Allow this session to load .ps1 files even when the system policy is Restricted
+try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
+
 Clear-Host
 
 $pictures = [Environment]::GetFolderPath('MyPictures')
