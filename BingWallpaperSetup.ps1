@@ -626,8 +626,8 @@ try {
         Write-Host "Scheduled task blocked - using startup folder instead."
     }
 
+    $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
     if (!$taskDone) {
-        $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
         $startupContent = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
         if ($PSBoundParameters.ContainsKey('Resolution')) { $startupContent += " -Resolution $Resolution" }
         if ($setLockScreen) { $startupContent += ' -SetLockScreen' }
@@ -638,6 +638,62 @@ try {
     Write-Host ""
     Write-Host "Installed to: $installDir"
     Write-Host "Open Settings.bat in the BingWallpaper folder to manage settings or uninstall."
+    Write-Host ""
+
+    Write-Host "Step 3.5: Verifying installation..."
+    function Write-InstallLog($msg) {
+        "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] $msg" | Add-Content $logFile -Encoding UTF8
+    }
+    $checks = 0; $passed = 0
+
+    $checks++
+    if (Test-Path $scriptPath) {
+        Write-InstallLog 'Check: BingWallpaper.ps1 exists ... OK'; $passed++
+    } else {
+        Write-InstallLog 'Check: BingWallpaper.ps1 exists ... NOT FOUND'
+    }
+
+    $checks++
+    if (Test-Path $settingsPs1) {
+        Write-InstallLog 'Check: Settings.ps1 exists ... OK'; $passed++
+    } else {
+        Write-InstallLog 'Check: Settings.ps1 exists ... NOT FOUND'
+    }
+
+    $checks++
+    if (Test-Path $settingsBat) {
+        Write-InstallLog 'Check: Settings.bat exists ... OK'; $passed++
+    } else {
+        Write-InstallLog 'Check: Settings.bat exists ... NOT FOUND'
+    }
+
+    $checks++
+    $verifyTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($verifyTask) {
+        Write-InstallLog "Check: Scheduled task ($($verifyTask.State)) ... OK"; $passed++
+    } elseif (Test-Path $startupBatPath) {
+        Write-InstallLog 'Check: Scheduled task ... NOT FOUND (startup folder active)'; $passed++
+    } else {
+        Write-InstallLog 'Check: Autostart ... NOT CONFIGURED'
+    }
+
+    if ($verifyTask) {
+        $checks++
+        $taskArgs = $verifyTask.Actions[0].Arguments
+        if ($taskArgs -match [regex]::Escape($scriptPath)) {
+            Write-InstallLog 'Check: Task script path matches ... OK'; $passed++
+        } else {
+            Write-InstallLog "Check: Task script path ... MISMATCH (task has $($taskArgs -replace '.*-File\s+\"?([^\"]+)\"?.*','$1'))"
+        }
+    }
+
+    if ($passed -eq $checks) {
+        Write-InstallLog "Verification passed ($passed/$checks)"
+        Write-Host "Verification passed ($passed/$checks)."
+    } else {
+        Write-InstallLog "Verification completed with warnings ($passed/$checks)"
+        Write-Host "Verification completed with warnings ($passed/$checks) - check the log." -ForegroundColor Yellow
+    }
     Write-Host ""
 
     Write-Host "Step 4: Setting today's wallpaper..."
