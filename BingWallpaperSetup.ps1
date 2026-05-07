@@ -438,17 +438,22 @@ function Invoke-Uninstall {
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  This removes the scheduled task and scripts.'
-    Write-Host '  Your wallpaper photos and run log will be kept.'
+    Write-Host '  Your wallpaper photos will be kept.'
     Write-Host ''
     $confirm = (Read-Host '  Type YES to confirm').Trim()
     if ($confirm -ne 'YES') { return }
+    Write-Host ''
+    $deleteLog = (Read-Host '  Also delete the run log? [y/N]').Trim().ToUpper()
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -EA SilentlyContinue
     Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat') -EA SilentlyContinue
     Write-Host ''
     Write-Host '  Uninstalled. This window will close shortly.' -ForegroundColor Green
     $batPath     = Join-Path $InstallDir 'Settings.bat'
     $scriptsPath = Join-Path $InstallDir 'Scripts'
-    Start-Process cmd -ArgumentList "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`"" -WindowStyle Hidden
+    $logsPath    = Join-Path $InstallDir 'Logs'
+    $cleanupCmd  = "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`""
+    if ($deleteLog -eq 'Y') { $cleanupCmd += " & rmdir /s /q `"$logsPath`"" }
+    Start-Process cmd -ArgumentList $cleanupCmd -WindowStyle Hidden
     Start-Sleep 3
     exit
 }
@@ -703,6 +708,8 @@ try {
         if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -Install } else { & $scriptPath -Market $Market -Install }
     }
 
+    Write-Host ""
+    Write-Host "  Installation successful!" -ForegroundColor Green
     Write-Host ""
     Read-Host "  Press Enter to close"
 
