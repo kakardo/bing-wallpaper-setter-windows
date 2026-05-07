@@ -162,7 +162,7 @@ $file = "$dir\${date}_${name}_${Resolution}.jpg"
 try {
     $isNew = !(Test-Path $file)
     if ($isNew) {
-        Write-Log (if ($Install) { 'Installation started' } else { 'Started' })
+        Write-Log $(if ($Install) { 'Installation started' } else { 'Started' })
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
         if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
@@ -176,7 +176,7 @@ try {
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
         }
     } else {
-        Write-Log (if ($Install) { 'Installation started | Already up to date' } else { 'Started | Already up to date' })
+        Write-Log $(if ($Install) { 'Installation started | Already up to date' } else { 'Started | Already up to date' })
         Write-Host "Wallpaper is already up to date."
     }
     if ($SetLockScreen -and $isNew) {
