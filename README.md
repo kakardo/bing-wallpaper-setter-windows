@@ -28,6 +28,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Downloads the daily Bing wallpaper at logon.
 - Updates the wallpaper on all connected monitors.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\`.
+- Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
 - Optional lock screen wallpaper update (primary monitor only).
 - Retries automatically if the network is unavailable at startup.
 - `Settings.bat` for management and uninstall.
@@ -57,6 +58,7 @@ Settings
 │       ├── [3] By rows  (500 / 1 000 / 5 000 / custom)
 │       └── [B]   Back
 ├── [W] Run now
+├── [C] Recalculate stats
 ├── [U] Uninstall
 └── [X] Exit
 ```
@@ -80,7 +82,7 @@ Example:
 
 ## Uninstall
 
-Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts are removed. Your wallpaper photos and run log stay.
+Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts are removed. Your wallpaper photos stay. You will be asked whether to also delete the run log and stats.
 
 ## Requirements
 

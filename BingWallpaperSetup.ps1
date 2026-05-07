@@ -33,7 +33,7 @@ $scriptsDir  = Join-Path $installDir 'Scripts'
 $scriptPath  = Join-Path $scriptsDir 'BingWallpaper.ps1'
 $settingsBat = Join-Path $installDir 'Settings.bat'
 $settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
-$logsDir     = Join-Path $installDir 'Logs'
+$logsDir     = Join-Path $installDir 'Data'
 $logFile     = Join-Path $logsDir 'run.log'
 
 # - Status check (if already installed) - - - - - - - - - - - #
@@ -99,7 +99,9 @@ if (!$Resolution) {
 $wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); int active = 0; for (uint i = 0; i < count; i++) { try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); if (r.right - r.left > 0 && r.bottom - r.top > 0) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } } catch { } } return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
-$logDir = Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'Logs'
+$installRoot = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
+$logDir    = Join-Path $installRoot 'Data'
+$statsFile = Join-Path $installRoot 'Data\Stats.json'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'run.log'
 function Write-Log($msg) {
@@ -174,6 +176,13 @@ try {
             $title = if ($img.title) { $img.title } else { 'Untitled' }
             Write-Log "Wallpaper set | Monitors: $set | `"$title`""
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
+            try {
+                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ WallpaperCount = 0; DaysRun = 0; LastRun = '' } }
+                $stats.WallpaperCount++
+                $today = (Get-Date).ToString('yyyy-MM-dd')
+                if ($stats.LastRun -ne $today) { $stats.DaysRun++; $stats.LastRun = $today }
+                $stats | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
+            } catch {}
         }
     } else {
         if (!$Install) { Write-Log 'Started | Already up to date' }
@@ -219,9 +228,10 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-$taskName      = 'BingWallpaperSetter'
-$scriptPath    = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
-$logFile       = Join-Path $InstallDir 'Logs\run.log'
+$taskName       = 'BingWallpaperSetter'
+$scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
+$logFile        = Join-Path $InstallDir 'Data\run.log'
+$statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 
 function Get-TaskConfig {
@@ -273,13 +283,10 @@ function Show-Status {
                      elseif ($cfg.LogCap -match '^(\d+)KB$') { "$($Matches[1]) KB" } `
                      elseif ($cfg.LogCap -match '^(\d+)R$')  { "$($Matches[1]) rows" } `
                      else { 'Off' }
-    $daysRun = 0; $lastRun = 'Never'
-    if (Test-Path $logFile) {
-        $starts  = @(Get-Content $logFile | Where-Object { $_ -match '\] Started' })
-        $daysRun = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
-        if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $lastRun = $Matches[1] }
-    }
-    $wallpaperCount = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | Measure-Object).Count
+    $stats          = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+    $wallpaperCount = if ($stats) { $stats.WallpaperCount } else { 'Unknown (run [C] to calculate)' }
+    $daysRun        = if ($stats) { $stats.DaysRun }        else { 0 }
+    $lastRun        = if ($stats -and $stats.LastRun) { $stats.LastRun } else { 'Never' }
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
@@ -303,7 +310,8 @@ function Show-Status {
     Write-Host ''
     Write-Host '  [L] Toggle lock screen   [M] Change market' -ForegroundColor DarkGray
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
-    Write-Host '  [G] Log cap              [U] Uninstall' -ForegroundColor DarkGray
+    Write-Host '  [G] Log cap              [C] Recalculate stats' -ForegroundColor DarkGray
+    Write-Host '  [U] Uninstall' -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
         Write-Host '  [T] Try scheduled task   [X] Exit' -ForegroundColor DarkGray
     } else {
@@ -450,7 +458,7 @@ function Invoke-Uninstall {
     Write-Host '  Uninstalled. This window will close shortly.' -ForegroundColor Green
     $batPath     = Join-Path $InstallDir 'Settings.bat'
     $scriptsPath = Join-Path $InstallDir 'Scripts'
-    $logsPath    = Join-Path $InstallDir 'Logs'
+    $logsPath    = Join-Path $InstallDir 'Data'
     $cleanupCmd  = "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`""
     if ($deleteLog -eq 'Y') { $cleanupCmd += " & rmdir /s /q `"$logsPath`"" }
     Start-Process cmd -ArgumentList $cleanupCmd -WindowStyle Hidden
@@ -568,6 +576,17 @@ function Try-ScheduledTask {
     Start-Sleep 3
 }
 
+function Invoke-Recalculate {
+    Write-Host '  Recalculating...' -ForegroundColor DarkGray
+    $count   = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue).Count
+    $starts  = @(Get-Content $logFile -EA SilentlyContinue | Where-Object { $_ -match '\] Started' })
+    $days    = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
+    $last    = if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { '' }
+    [PSCustomObject]@{ WallpaperCount = $count; DaysRun = $days; LastRun = $last } | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
+    Write-Host '  Done.' -ForegroundColor Green
+    Start-Sleep 1
+}
+
 # Main loop
 while ($true) {
     Show-Status
@@ -578,6 +597,7 @@ while ($true) {
         'R' { Show-ResolutionMenu }
         'W' { Run-Now }
         'G' { Show-LogCapMenu }
+        'C' { Invoke-Recalculate }
         'T' { Try-ScheduledTask }
         'U' { Invoke-Uninstall }
         'X' { exit }
