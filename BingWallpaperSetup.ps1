@@ -207,7 +207,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Scripts\Settings.ps1"
 # - Embedded Settings.ps1 - - - - - - - - - - - - - - - - - - #
 
 $settingsPs1Content = @'
-param([string]$InstallDir = $PSScriptRoot)
+param([string]$InstallDir = (Split-Path $PSScriptRoot))
 
 # Self-elevate if not admin
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
