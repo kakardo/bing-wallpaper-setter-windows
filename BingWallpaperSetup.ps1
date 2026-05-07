@@ -162,7 +162,7 @@ $file = "$dir\${date}_${name}_${Resolution}.jpg"
 try {
     $isNew = !(Test-Path $file)
     if ($isNew) {
-        Write-Log $(if ($Install) { 'Installation started' } else { 'Started' })
+        if (!$Install) { Write-Log 'Started' }
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
         if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
@@ -176,7 +176,7 @@ try {
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
         }
     } else {
-        Write-Log $(if ($Install) { 'Installation started | Already up to date' } else { 'Started | Already up to date' })
+        if (!$Install) { Write-Log 'Started | Already up to date' }
         Write-Host "Wallpaper is already up to date."
     }
     if ($SetLockScreen -and $isNew) {
@@ -595,6 +595,7 @@ try {
     if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
+    "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
 
     Write-Host "Step 2: Writing scripts..."
     Set-Content -Path $scriptPath   -Value $wallpaperScript    -Encoding UTF8  -ErrorAction Stop
