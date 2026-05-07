@@ -618,7 +618,7 @@ function Try-ScheduledTask {
         $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
         $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap)
         $trigger   = New-ScheduledTaskTrigger -AtLogOn
-        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -EA Stop | Out-Null
         Remove-Item $startupBatPath -EA SilentlyContinue
@@ -699,7 +699,7 @@ try {
         $runLevel  = if ($setLockScreen) { 'Highest' } else { 'Limited' }
         $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
         $trigger   = New-ScheduledTaskTrigger -AtLogOn
-        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
             Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
