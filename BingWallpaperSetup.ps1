@@ -34,7 +34,7 @@ $scriptPath  = Join-Path $scriptsDir 'BingWallpaper.ps1'
 $settingsBat = Join-Path $installDir 'Settings.bat'
 $settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
 $logsDir     = Join-Path $installDir 'Data'
-$logFile     = Join-Path $logsDir 'run.log'
+$logFile     = Join-Path $logsDir 'Run.log'
 
 # - Status check (if already installed) - - - - - - - - - - - #
 
@@ -103,7 +103,7 @@ $installRoot = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
 $logDir    = Join-Path $installRoot 'Data'
 $statsFile = Join-Path $installRoot 'Data\Stats.json'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-$log = Join-Path $logDir 'run.log'
+$log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg" | Add-Content $log -Encoding UTF8
     if ($LogCap -ne '0' -and (Test-Path $log)) {
@@ -230,7 +230,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 $taskName       = 'BingWallpaperSetter'
 $scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
-$logFile        = Join-Path $InstallDir 'Data\run.log'
+$logFile        = Join-Path $InstallDir 'Data\Run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 
@@ -288,7 +288,7 @@ function Show-Status {
                      elseif ($cfg.LogCap -match '^(\d+)KB$') { "$($Matches[1]) KB" } `
                      elseif ($cfg.LogCap -match '^(\d+)R$')  { "$($Matches[1]) rows" } `
                      else { 'Off' }
-    $stats          = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+    $stats          = $script:cachedStats
     $wallpaperCount = if ($stats) { $stats.WallpaperCount } else { 'Unknown (run [C] to calculate)' }
     $daysRun        = if ($stats) { $stats.DaysRun }        else { 0 }
     $lastRun        = if ($stats -and $stats.LastRun) { $stats.LastRun } else { 'Never' }
@@ -436,6 +436,7 @@ function Run-Now {
         if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
     }
     Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+    $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
     Write-Host ''
     if (Test-Path $logFile) {
         Get-Content $logFile | Select-Object -Last 2 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
@@ -456,16 +457,25 @@ function Invoke-Uninstall {
     $confirm = (Read-Host '  Type YES to confirm').Trim()
     if ($confirm -ne 'YES') { return }
     Write-Host ''
-    $deleteLog = (Read-Host '  Also delete the run log? [y/N]').Trim().ToUpper()
+    $deleteLog   = (Read-Host '  Also delete "Run.log"? [y/N]').Trim().ToUpper()
+    $deleteStats = (Read-Host '  Also delete "Stats.json"? [y/N]').Trim().ToUpper()
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -EA SilentlyContinue
     Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat') -EA SilentlyContinue
     Write-Host ''
-    Write-Host '  Uninstalled. This window will close shortly.' -ForegroundColor Green
+    Write-Host '  Uninstalled.' -ForegroundColor Green
+    if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { Write-Host '  Deleted: "Run.log" and "Stats.json".' -ForegroundColor Green }
+    elseif ($deleteLog -eq 'Y')   { Write-Host '  Deleted: "Run.log".' -ForegroundColor Green }
+    elseif ($deleteStats -eq 'Y') { Write-Host '  Deleted: "Stats.json".' -ForegroundColor Green }
+    Write-Host '  This window will close shortly.' -ForegroundColor Green
     $batPath     = Join-Path $InstallDir 'Settings.bat'
     $scriptsPath = Join-Path $InstallDir 'Scripts'
-    $logsPath    = Join-Path $InstallDir 'Data'
+    $dataPath    = Join-Path $InstallDir 'Data'
+    $logPath     = Join-Path $dataPath 'Run.log'
+    $statsPath   = Join-Path $dataPath 'Stats.json'
     $cleanupCmd  = "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`""
-    if ($deleteLog -eq 'Y') { $cleanupCmd += " & rmdir /s /q `"$logsPath`"" }
+    if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { $cleanupCmd += " & rmdir /s /q `"$dataPath`"" }
+    elseif ($deleteLog -eq 'Y')   { $cleanupCmd += " & del /f /q `"$logPath`"" }
+    elseif ($deleteStats -eq 'Y') { $cleanupCmd += " & del /f /q `"$statsPath`"" }
     Start-Process cmd -ArgumentList $cleanupCmd -WindowStyle Hidden
     Start-Sleep 3
     exit
@@ -588,9 +598,12 @@ function Invoke-Recalculate {
     $days    = ($starts | ForEach-Object { if ($_ -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } } | Select-Object -Unique).Count
     $last    = if ($starts.Count -gt 0 -and $starts[-1] -match '\[(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { '' }
     [PSCustomObject]@{ WallpaperCount = $count; DaysRun = $days; LastRun = $last } | ConvertTo-Json | Set-Content $statsFile -Encoding UTF8
+    $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
     Write-Host '  Done.' -ForegroundColor Green
     Start-Sleep 1
 }
+
+$script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
 
 # Main loop
 while ($true) {
