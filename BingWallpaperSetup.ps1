@@ -23,6 +23,18 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+# Disable QuickEdit mode so accidental clicks don't pause the script
+try {
+    $k = Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@ -Name K -Namespace W -PassThru
+    $h = [W.K]::GetStdHandle(-10); $m = 0
+    [W.K]::GetConsoleMode($h, [ref]$m)
+    [W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
+} catch {}
+
 # Allow this session to load .ps1 files even when the system policy is Restricted
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
 
@@ -243,6 +255,18 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
 }
+
+# Disable QuickEdit mode so accidental clicks don't pause the script
+try {
+    $k = Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@ -Name K -Namespace W -PassThru
+    $h = [W.K]::GetStdHandle(-10); $m = 0
+    [W.K]::GetConsoleMode($h, [ref]$m)
+    [W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
+} catch {}
 
 $taskName       = 'BingWallpaperSetter'
 $scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
