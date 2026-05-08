@@ -10,7 +10,7 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
 2. Run it. Windows may show a SmartScreen warning (see below).
 3. Follow the on-screen prompts. The installer will:
    - Ask whether to also update the lock screen wallpaper.
-   - Register a scheduled task that runs at logon.
+   - Register a scheduled task that runs at logon and checks hourly until the day's wallpaper is set.
    - Download and set today's wallpaper immediately.
 
 ## Windows SmartScreen warning
@@ -25,7 +25,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 
 ## Features
 
-- Downloads the daily Bing wallpaper at logon.
+- Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
 - Updates the wallpaper on all connected monitors.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\`.
 - Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
@@ -63,7 +63,7 @@ Settings
 └── [X] Exit
 ```
 
-Market and resolution changes take effect at the next logon, or immediately via **[W] Run now**.
+Market and resolution changes take effect at the next logon or hourly check, or immediately via **[W] Run now**.
 
 ## Parameters
 
