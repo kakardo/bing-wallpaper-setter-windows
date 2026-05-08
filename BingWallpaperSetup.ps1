@@ -350,11 +350,19 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $checkInterval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
         $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
-        Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -EA Stop | Out-Null
+        try {
+            Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -EA Stop | Out-Null
+            return $true
+        } catch {
+            Write-Host "  Error updating task: $_" -ForegroundColor Red
+            return $false
+        }
     } elseif (Test-Path $startupBatPath) {
         Set-Content -Path $startupBatPath -Value "powershell.exe $(Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd)" -Encoding ASCII
+        return $true
     } else {
-        Write-Host '  Error: no autostart method found.' -ForegroundColor Red; Start-Sleep 2
+        Write-Host '  Error: no autostart method found.' -ForegroundColor Red
+        return $false
     }
 }
 
@@ -385,7 +393,7 @@ function Show-Status {
     $cwe                  = if ($cfg) { $cfg.CheckWindowEnd }   else { 0 }
     $checkWindowDisplay   = if ($cws -eq 0 -and $cwe -eq 0) { 'All day' } else { "$($cws.ToString('D2')):00 - $($cwe.ToString('D2')):00" }
     $labelWidth = 14  # "Downloaded  : ".Length
-    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "  $wallpapersSet set, $wallpaperCount saved") | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
+    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved") | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
     $sep = [string][char]0x2500 * $sepWidth
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
@@ -412,20 +420,15 @@ function Show-Status {
     Write-Host "  $sep" -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
         Write-Host ''
-        Write-Host '  Note: running via startup folder. Lock screen control' -ForegroundColor Yellow
-        Write-Host '  is unavailable. Use [T] to try switching to scheduled task.' -ForegroundColor Yellow
+        Write-Host '  Note: lock screen requires the scheduled task. Use [T] to switch.' -ForegroundColor Yellow
     }
     Write-Host ''
     Write-Host '  [L] Toggle lock screen   [M] Change market' -ForegroundColor DarkGray
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
     Write-Host '  [G] Log cap              [C] Recalculate stats' -ForegroundColor DarkGray
     Write-Host '  [I] Check interval       [O] Check hours' -ForegroundColor DarkGray
-    Write-Host '  [U] Uninstall' -ForegroundColor DarkGray
-    if ($cfg -and $cfg.Source -eq 'startup') {
-        Write-Host '  [T] Try scheduled task   [X] Exit' -ForegroundColor DarkGray
-    } else {
-        Write-Host '  [X] Exit' -ForegroundColor DarkGray
-    }
+    Write-Host '  [V] View log             [T] Switch to task' -ForegroundColor DarkGray
+    Write-Host '  [U] Uninstall            [X] Exit' -ForegroundColor DarkGray
     Write-Host ''
 }
 
@@ -438,9 +441,10 @@ function Toggle-LockScreen {
         Start-Sleep 3; return
     }
     $newLock = -not $cfg.LockScreen
-    Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-    $state = if ($newLock) { 'enabled' } else { 'disabled' }
-    Write-Host "  Lock screen $state." -ForegroundColor Green
+    if (Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+        $state = if ($newLock) { 'enabled' } else { 'disabled' }
+        Write-Host "  Lock screen $state." -ForegroundColor Green
+    }
     Start-Sleep 1
 }
 
@@ -491,8 +495,9 @@ function Show-MarketMenu {
             if ($idx -ge 0 -and $idx -lt $markets.Count) { $newMarket = $markets[$idx].Code } else { continue }
         } else { continue }
         if ($newMarket) {
-            Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-            Write-Host "  Market updated to $newMarket." -ForegroundColor Green
+            if (Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+                Write-Host "  Market updated to $newMarket." -ForegroundColor Green
+            }
             Start-Sleep 1; return
         }
     }
@@ -521,9 +526,10 @@ function Show-ResolutionMenu {
             '1' { '' }; '2' { '1920x1080' }; '3' { '3840x2160' }; '4' { '1366x768' }; default { $null }
         }
         if ($null -ne $newRes) {
-            Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-            $display = if ($newRes) { $newRes } else { 'Auto-detect' }
-            Write-Host "  Resolution set to $display." -ForegroundColor Green
+            if (Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+                $display = if ($newRes) { $newRes } else { 'Auto-detect' }
+                Write-Host "  Resolution set to $display." -ForegroundColor Green
+            }
             Start-Sleep 1; return
         }
     }
@@ -617,8 +623,9 @@ function Show-LogCapMenu {
         $choice = (Read-Host '  Choice').Trim().ToUpper()
         if ($choice -eq 'B') { return }
         if ($choice -eq '1') {
-            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0' $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-            Write-Host '  Log cap disabled.' -ForegroundColor Green
+            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0' $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+                Write-Host '  Log cap disabled.' -ForegroundColor Green
+            }
             Start-Sleep 1; return
         }
         if ($choice -eq '2') {
@@ -645,8 +652,9 @@ function Show-LogCapMenu {
                     else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($newCap) {
-                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-                    Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+                        Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    }
                     Start-Sleep 1; return
                 }
             }
@@ -675,8 +683,9 @@ function Show-LogCapMenu {
                     else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($newCap) {
-                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-                    Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+                        Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    }
                     Start-Sleep 1; return
                 }
             }
@@ -684,9 +693,22 @@ function Show-LogCapMenu {
     }
 }
 
+function Show-Log {
+    if (!(Test-Path $logFile)) { Write-Host '  No log file found.' -ForegroundColor DarkGray; Start-Sleep 2; return }
+    $lines = Get-Content $logFile | Select-Object -Last 10
+    Write-Host ''
+    Write-Host '  Recent log entries' -ForegroundColor Cyan
+    Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+    Write-Host ''
+    $lines | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    Write-Host ''
+    Read-Host '  Press Enter to return' | Out-Null
+}
+
 function Try-ScheduledTask {
     $cfg = Get-TaskConfig
     if (!$cfg) { Write-Host '  No configuration found.' -ForegroundColor Red; Start-Sleep 2; return }
+    if ($cfg.Source -eq 'task') { Write-Host '  Already running as a scheduled task.' -ForegroundColor DarkGray; Start-Sleep 2; return }
     Write-Host '  Attempting to register scheduled task...' -ForegroundColor DarkGray
     try {
         $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
@@ -746,9 +768,10 @@ function Show-CheckIntervalMenu {
             else { Write-Host '  Minimum 10 minutes.' -ForegroundColor Red; Start-Sleep 2; continue }
         }
         if ($null -ne $newInterval) {
-            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $newInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-            $display = if ($newInterval -lt 60) { "$newInterval min" } elseif ($newInterval -eq 60) { '1 hour' } else { "$([int]($newInterval / 60)) hours" }
-            Write-Host "  Check interval set to $display." -ForegroundColor Green
+            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $newInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+                $display = if ($newInterval -lt 60) { "$newInterval min" } elseif ($newInterval -eq 60) { '1 hour' } else { "$([int]($newInterval / 60)) hours" }
+                Write-Host "  Check interval set to $display." -ForegroundColor Green
+            }
             Start-Sleep 1; return
         }
     }
@@ -789,9 +812,10 @@ function Show-CheckHoursMenu {
             } else { Write-Host '  Invalid range. Start must be less than end.' -ForegroundColor Red; Start-Sleep 2; continue }
         }
         if ($null -ne $newStart) {
-            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $newStart $newEnd
-            $display = if ($newStart -eq 0 -and $newEnd -eq 0) { 'All day' } else { "$($newStart.ToString('D2')):00 - $($newEnd.ToString('D2')):00" }
-            Write-Host "  Check hours set to $display." -ForegroundColor Green
+            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $newStart $newEnd) {
+                $display = if ($newStart -eq 0 -and $newEnd -eq 0) { 'All day' } else { "$($newStart.ToString('D2')):00 - $($newEnd.ToString('D2')):00" }
+                Write-Host "  Check hours set to $display." -ForegroundColor Green
+            }
             Start-Sleep 1; return
         }
     }
@@ -812,6 +836,7 @@ while ($true) {
         'C' { Invoke-Recalculate }
         'I' { Show-CheckIntervalMenu }
         'O' { Show-CheckHoursMenu }
+        'V' { Show-Log }
         'T' { Try-ScheduledTask }
         'U' { Invoke-Uninstall }
         'X' { exit }
