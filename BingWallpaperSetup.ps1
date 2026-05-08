@@ -148,7 +148,7 @@ if (-not $Install) {
             if ($currentHour -lt $CheckWindowStart -or $currentHour -ge $CheckWindowEnd) { exit }
         }
         $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
-        if ($earlyStats -and $earlyStats.LatestFetch -eq (Get-Date).ToString('yyyy-MM-dd')) { exit }
+        if ($earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')) { exit }
     } catch {}
 }
 
@@ -210,15 +210,14 @@ try {
             Write-Log "Wallpaper set | Monitors: $set | `"$title`""
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
             try {
-                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' }; LatestFetch = ''; Version = '' } }
+                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' }; Version = '' } }
                 $now   = Get-Date
                 $today = $now.ToString('yyyy-MM-dd')
                 $stats.TimesRun++
-                if ($stats.LastRun.Date -ne $today) { $stats.DaysRun++ }
+                if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
                 $stats.LastRun      = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
                 $stats.WallpaperCount++
                 $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss') }
-                $stats.LatestFetch  = $date
                 $stats.Version      = $scriptVersion
                 $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
             } catch {}
@@ -227,14 +226,13 @@ try {
         if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
         Write-Host "Wallpaper is already up to date."
         try {
-            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' }; LatestFetch = ''; Version = '' } }
+            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' }; Version = '' } }
             $now   = Get-Date
             $today = $now.ToString('yyyy-MM-dd')
             $stats.TimesRun++
-            if ($stats.LastRun.Date -ne $today) { $stats.DaysRun++ }
-            $stats.LastRun     = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
-            $stats.LatestFetch = $date
-            $stats.Version     = $scriptVersion
+            if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
+            $stats.LastRun  = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
+            $stats.Version  = $scriptVersion
             $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
         } catch {}
     }
@@ -356,11 +354,11 @@ function Show-Status {
                      else { 'Off' }
     $stats           = $script:cachedStats
     $wallpaperCount  = if ($stats) { $stats.WallpaperCount } else { 'Unknown (run [C] to calculate)' }
-    $daysRun         = if ($stats) { $stats.DaysRun } else { 0 }
+    $wallpapersSet   = if ($stats) { $stats.WallpapersSet } else { 0 }
     $timesRun        = if ($stats) { $stats.TimesRun } else { 0 }
+    $firstRun        = if ($stats -and $stats.FirstRun) { $stats.FirstRun } else { 'Unknown' }
     $lastRun         = if ($stats -and $stats.LastRun -and $stats.LastRun.Date) { "$($stats.LastRun.Date) $($stats.LastRun.Time)" } else { 'Never' }
     $lastDownloaded  = if ($stats -and $stats.LastDownloaded -and $stats.LastDownloaded.Title) { "$($stats.LastDownloaded.Title) ($($stats.LastDownloaded.Date) $($stats.LastDownloaded.Time))" } else { 'Never' }
-    $latestFetch          = if ($stats -and $stats.LatestFetch) { $stats.LatestFetch } else { 'Unknown' }
     $versionDisplay       = if ($stats -and $stats.Version) { $stats.Version } else { 'Unknown' }
     $ci                   = if ($cfg) { $cfg.CheckInterval } else { 60 }
     $checkIntervalDisplay = if ($ci -lt 60) { "$ci min" } elseif ($ci -eq 60) { '1 hour' } else { "$([int]($ci / 60)) hours" }
@@ -379,12 +377,12 @@ function Show-Status {
     Write-Host "  Log cap    : $logCapDisplay"
     Write-Host "  Check every: $checkIntervalDisplay"
     Write-Host "  Check hours: $checkWindowDisplay"
+    Write-Host "  First run  : $firstRun"
     Write-Host "  Times run  : $timesRun"
-    Write-Host "  Days run   : $daysRun"
+    Write-Host "  Wallpapers set: $wallpapersSet"
     Write-Host "  Last run   : $lastRun"
     Write-Host "  Wallpapers : $wallpaperCount saved"
     Write-Host "  Downloaded : $lastDownloaded"
-    Write-Host "  Latest fetch: $latestFetch"
     Write-Host "  Version    : $versionDisplay"
     Write-Host ''
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
@@ -678,7 +676,7 @@ function Try-ScheduledTask {
 function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
     $count  = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue).Count
-    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; LatestFetch = ''; Version = '' } }
+    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = '' } }
     $stats.WallpaperCount = $count
     $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
     $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
@@ -798,7 +796,7 @@ try {
     if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path (Join-Path $logsDir 'Stats.json'))) {
-        [PSCustomObject]@{ TimesRun = 0; DaysRun = 0; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; LatestFetch = ''; Version = '' } | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $logsDir 'Stats.json') -Encoding UTF8
+        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = '' } | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $logsDir 'Stats.json') -Encoding UTF8
     }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
 
