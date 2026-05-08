@@ -165,30 +165,33 @@ if (-not $Install) {
     } catch {}
 }
 
-# Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
-$retrySchedule = @(
-    @{ Interval = 10;  Count = 6  },
-    @{ Interval = 60;  Count = 15 },
-    @{ Interval = 300; Count = 9  }
-)
-
 $api = $null
-$attempt = 0
-foreach ($phase in $retrySchedule) {
-    for ($i = 0; $i -lt $phase.Count; $i++) {
-        try {
-            $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop
-            break
-        } catch {
-            $attempt++
-            Write-Log "Network unavailable, retrying in $($phase.Interval)s (attempt $attempt) - $_"
-            Start-Sleep -Seconds $phase.Interval
+if ($Install) {
+    try { $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop } catch {}
+    if (!$api) { Write-Log 'Skipped | Network unavailable at install time'; exit }
+} else {
+    # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
+    $retrySchedule = @(
+        @{ Interval = 10;  Count = 6  },
+        @{ Interval = 60;  Count = 15 },
+        @{ Interval = 300; Count = 9  }
+    )
+    $attempt = 0
+    foreach ($phase in $retrySchedule) {
+        for ($i = 0; $i -lt $phase.Count; $i++) {
+            try {
+                $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop
+                break
+            } catch {
+                $attempt++
+                Write-Log "Network unavailable, retrying in $($phase.Interval)s (attempt $attempt) - $_"
+                Start-Sleep -Seconds $phase.Interval
+            }
         }
+        if ($api) { break }
     }
-    if ($api) { break }
+    if (!$api) { Write-Log 'Skipped | Network unavailable after all retries'; exit }
 }
-
-if (!$api) { Write-Log 'Skipped | Network unavailable after all retries'; exit }
 
 $img  = $api.images[0]
 if (!$img -or !$img.urlbase -or !$img.startdate) { Write-Log 'Skipped | Bing returned a malformed response'; exit }
@@ -946,10 +949,21 @@ try {
     Write-Host ""
 
     Write-Host "Step 4: Setting today's wallpaper..."
+    Write-Host "  Downloading..." -NoNewline
     if ($setLockScreen) {
-        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen -Install } else { & $scriptPath -Market $Market -SetLockScreen -Install }
+        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen -Install 6>$null } else { & $scriptPath -Market $Market -SetLockScreen -Install 6>$null }
     } else {
-        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -Install } else { & $scriptPath -Market $Market -Install }
+        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -Install 6>$null } else { & $scriptPath -Market $Market -Install 6>$null }
+    }
+    $lastLog = if (Test-Path $logFile) { Get-Content $logFile | Select-Object -Last 1 } else { '' }
+    if ($lastLog -match 'Network unavailable at install time') {
+        Write-Host ""
+        Write-Host "  Network unavailable. Skipping for now." -ForegroundColor Yellow
+        Write-Host "  The wallpaper will be set automatically at next logon." -ForegroundColor DarkGray
+    } else {
+        $dlTitle = if ($lastLog -match '"([^"]+)"') { $Matches[1] } else { $null }
+        Write-Host " done." -ForegroundColor Green
+        if ($dlTitle) { Write-Host "  $dlTitle" -ForegroundColor DarkGray }
     }
 
     Write-Host ""
