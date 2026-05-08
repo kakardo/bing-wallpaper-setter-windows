@@ -98,6 +98,9 @@ param(
     [string]$Resolution = '',
     [switch]$SetLockScreen,
     [string]$LogCap = '0',
+    [int]$CheckInterval = 60,
+    [int]$CheckWindowStart = 0,
+    [int]$CheckWindowEnd = 0,
     [switch]$Install
 )
 
@@ -137,9 +140,13 @@ function Write-Log($msg) {
     }
 }
 
-# Exit early if today's wallpaper is already set (hourly task deduplication)
+# Exit early if outside check window or today's wallpaper is already set
 if (-not $Install) {
     try {
+        if ($CheckWindowStart -ne 0 -or $CheckWindowEnd -ne 0) {
+            $currentHour = (Get-Date).Hour
+            if ($currentHour -lt $CheckWindowStart -or $currentHour -ge $CheckWindowEnd) { exit }
+        }
         $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
         if ($earlyStats -and $earlyStats.LatestFetch -eq (Get-Date).ToString('yyyy-MM-dd')) { exit }
     } catch {}
@@ -297,32 +304,40 @@ function Get-TaskConfig {
         $a = Get-Content $startupBatPath; $source = 'startup'
     }
     if (!$a) { return $null }
-    $market     = if ($a -match '-Market\s+(\S+)')     { $Matches[1] } else { 'en-US' }
-    $resolution = if ($a -match '-Resolution\s+(\S+)') { $Matches[1] } else { '' }
-    $lockScreen = [bool]($a -match '-SetLockScreen')
-    $logCap     = if ($a -match '-LogCap\s+(\S+)') { $Matches[1] } else { '0' }
-    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; Source = $source }
+    $market           = if ($a -match '-Market\s+(\S+)')           { $Matches[1] } else { 'en-US' }
+    $resolution       = if ($a -match '-Resolution\s+(\S+)')       { $Matches[1] } else { '' }
+    $lockScreen       = [bool]($a -match '-SetLockScreen')
+    $logCap           = if ($a -match '-LogCap\s+(\S+)')           { $Matches[1] } else { '0' }
+    $checkInterval    = if ($a -match '-CheckInterval\s+(\d+)')    { [int]$Matches[1] } else { 60 }
+    $checkWindowStart = if ($a -match '-CheckWindowStart\s+(\d+)') { [int]$Matches[1] } else { 0 }
+    $checkWindowEnd   = if ($a -match '-CheckWindowEnd\s+(\d+)')   { [int]$Matches[1] } else { 0 }
+    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; CheckInterval = $checkInterval; CheckWindowStart = $checkWindowStart; CheckWindowEnd = $checkWindowEnd; Source = $source }
     return $script:cachedConfig
 }
 
-function Build-Args($market, $resolution, $lockScreen, $logCap) {
+function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0) {
     $a = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $market"
-    if ($resolution) { $a += " -Resolution $resolution" }
-    if ($lockScreen)  { $a += ' -SetLockScreen' }
-    if ($logCap -and $logCap -ne '0') { $a += " -LogCap $logCap" }
+    if ($resolution)                                        { $a += " -Resolution $resolution" }
+    if ($lockScreen)                                        { $a += ' -SetLockScreen' }
+    if ($logCap -and $logCap -ne '0')                      { $a += " -LogCap $logCap" }
+    if ($checkInterval -ne 60)                             { $a += " -CheckInterval $checkInterval" }
+    if ($checkWindowStart -ne 0 -or $checkWindowEnd -ne 0) { $a += " -CheckWindowStart $checkWindowStart -CheckWindowEnd $checkWindowEnd" }
     return $a
 }
 
-function Update-Task($market, $resolution, $lockScreen, $logCap = '0') {
+function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0) {
     $script:cachedConfig = $null
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     if ($task) {
-        $runLevel  = if ($lockScreen) { 'Highest' } else { 'Limited' }
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen $logCap)
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
-        Set-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -EA Stop | Out-Null
+        $runLevel      = if ($lockScreen) { 'Highest' } else { 'Limited' }
+        $action        = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd)
+        $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
+        $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $checkInterval) -RepetitionDuration (New-TimeSpan -Days 9999)
+        $triggers      = @($triggerLogon, $triggerHourly)
+        $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -EA Stop | Out-Null
     } elseif (Test-Path $startupBatPath) {
-        Set-Content -Path $startupBatPath -Value "powershell.exe $(Build-Args $market $resolution $lockScreen $logCap)" -Encoding ASCII
+        Set-Content -Path $startupBatPath -Value "powershell.exe $(Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd)" -Encoding ASCII
     } else {
         Write-Host '  Error: no autostart method found.' -ForegroundColor Red; Start-Sleep 2
     }
@@ -345,8 +360,13 @@ function Show-Status {
     $timesRun        = if ($stats) { $stats.TimesRun } else { 0 }
     $lastRun         = if ($stats -and $stats.LastRun -and $stats.LastRun.Date) { "$($stats.LastRun.Date) $($stats.LastRun.Time)" } else { 'Never' }
     $lastDownloaded  = if ($stats -and $stats.LastDownloaded -and $stats.LastDownloaded.Title) { "$($stats.LastDownloaded.Title) ($($stats.LastDownloaded.Date) $($stats.LastDownloaded.Time))" } else { 'Never' }
-    $latestFetch     = if ($stats -and $stats.LatestFetch) { $stats.LatestFetch } else { 'Unknown' }
-    $versionDisplay  = if ($stats -and $stats.Version) { $stats.Version } else { 'Unknown' }
+    $latestFetch          = if ($stats -and $stats.LatestFetch) { $stats.LatestFetch } else { 'Unknown' }
+    $versionDisplay       = if ($stats -and $stats.Version) { $stats.Version } else { 'Unknown' }
+    $ci                   = if ($cfg) { $cfg.CheckInterval } else { 60 }
+    $checkIntervalDisplay = if ($ci -lt 60) { "$ci min" } elseif ($ci -eq 60) { '1 hour' } else { "$([int]($ci / 60)) hours" }
+    $cws                  = if ($cfg) { $cfg.CheckWindowStart } else { 0 }
+    $cwe                  = if ($cfg) { $cfg.CheckWindowEnd }   else { 0 }
+    $checkWindowDisplay   = if ($cws -eq 0 -and $cwe -eq 0) { 'All day' } else { "$($cws.ToString('D2')):00 - $($cwe.ToString('D2')):00" }
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
@@ -357,6 +377,8 @@ function Show-Status {
     Write-Host "  Resolution : $resolution"
     Write-Host "  Lock screen: $lockScreen"
     Write-Host "  Log cap    : $logCapDisplay"
+    Write-Host "  Check every: $checkIntervalDisplay"
+    Write-Host "  Check hours: $checkWindowDisplay"
     Write-Host "  Times run  : $timesRun"
     Write-Host "  Days run   : $daysRun"
     Write-Host "  Last run   : $lastRun"
@@ -375,6 +397,7 @@ function Show-Status {
     Write-Host '  [L] Toggle lock screen   [M] Change market' -ForegroundColor DarkGray
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
     Write-Host '  [G] Log cap              [C] Recalculate stats' -ForegroundColor DarkGray
+    Write-Host '  [I] Check interval       [O] Check hours' -ForegroundColor DarkGray
     Write-Host '  [U] Uninstall' -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
         Write-Host '  [T] Try scheduled task   [X] Exit' -ForegroundColor DarkGray
@@ -393,7 +416,7 @@ function Toggle-LockScreen {
         Start-Sleep 3; return
     }
     $newLock = -not $cfg.LockScreen
-    Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap
+    Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
     $state = if ($newLock) { 'enabled' } else { 'disabled' }
     Write-Host "  Lock screen $state." -ForegroundColor Green
     Start-Sleep 1
@@ -446,7 +469,7 @@ function Show-MarketMenu {
             if ($idx -ge 0 -and $idx -lt $markets.Count) { $newMarket = $markets[$idx].Code } else { continue }
         } else { continue }
         if ($newMarket) {
-            Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap
+            Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
             Write-Host "  Market updated to $newMarket." -ForegroundColor Green
             Start-Sleep 1; return
         }
@@ -476,7 +499,7 @@ function Show-ResolutionMenu {
             '1' { '' }; '2' { '1920x1080' }; '3' { '3840x2160' }; '4' { '1366x768' }; default { $null }
         }
         if ($null -ne $newRes) {
-            Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap
+            Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
             $display = if ($newRes) { $newRes } else { 'Auto-detect' }
             Write-Host "  Resolution set to $display." -ForegroundColor Green
             Start-Sleep 1; return
@@ -562,7 +585,7 @@ function Show-LogCapMenu {
         $choice = (Read-Host '  Choice').Trim().ToUpper()
         if ($choice -eq 'B') { return }
         if ($choice -eq '1') {
-            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0'
+            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0' $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
             Write-Host '  Log cap disabled.' -ForegroundColor Green
             Start-Sleep 1; return
         }
@@ -590,7 +613,7 @@ function Show-LogCapMenu {
                     else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($newCap) {
-                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap
+                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
                     Write-Host "  Log cap set to $newCap." -ForegroundColor Green
                     Start-Sleep 1; return
                 }
@@ -620,7 +643,7 @@ function Show-LogCapMenu {
                     else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($newCap) {
-                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap
+                    Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
                     Write-Host "  Log cap set to $newCap." -ForegroundColor Green
                     Start-Sleep 1; return
                 }
@@ -635,7 +658,7 @@ function Try-ScheduledTask {
     Write-Host '  Attempting to register scheduled task...' -ForegroundColor DarkGray
     try {
         $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap)
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd)
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
@@ -663,6 +686,85 @@ function Invoke-Recalculate {
     Start-Sleep 1
 }
 
+function Show-CheckIntervalMenu {
+    while ($true) {
+        $cfg     = Get-TaskConfig
+        $ci      = if ($cfg) { $cfg.CheckInterval } else { 60 }
+        $current = if ($ci -lt 60) { "$ci min" } elseif ($ci -eq 60) { '1 hour' } else { "$([int]($ci / 60)) hours" }
+        Clear-Host
+        Write-Host ''
+        Write-Host '  Check interval' -ForegroundColor Cyan
+        Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+        Write-Host "  Current: $current"
+        Write-Host ''
+        Write-Host '  [1] 30 minutes'
+        Write-Host '  [2] 1 hour'
+        Write-Host '  [3] 2 hours'
+        Write-Host '  [4] 4 hours'
+        Write-Host '  [C] Custom (enter minutes)'
+        Write-Host ''
+        Write-Host '  [B] Back' -ForegroundColor DarkGray
+        Write-Host ''
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        if ($choice -eq 'B') { return }
+        $newInterval = switch ($choice) { '1' { 30 }; '2' { 60 }; '3' { 120 }; '4' { 240 }; default { $null } }
+        if ($choice -eq 'C') {
+            $entry = (Read-Host '  Enter interval in minutes (minimum 10)').Trim()
+            if ($entry -match '^\d+$' -and [int]$entry -ge 10) { $newInterval = [int]$entry }
+            else { Write-Host '  Minimum 10 minutes.' -ForegroundColor Red; Start-Sleep 2; continue }
+        }
+        if ($null -ne $newInterval) {
+            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $newInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
+            $display = if ($newInterval -lt 60) { "$newInterval min" } elseif ($newInterval -eq 60) { '1 hour' } else { "$([int]($newInterval / 60)) hours" }
+            Write-Host "  Check interval set to $display." -ForegroundColor Green
+            Start-Sleep 1; return
+        }
+    }
+}
+
+function Show-CheckHoursMenu {
+    while ($true) {
+        $cfg     = Get-TaskConfig
+        $cws     = if ($cfg) { $cfg.CheckWindowStart } else { 0 }
+        $cwe     = if ($cfg) { $cfg.CheckWindowEnd }   else { 0 }
+        $current = if ($cws -eq 0 -and $cwe -eq 0) { 'All day' } else { "$($cws.ToString('D2')):00 - $($cwe.ToString('D2')):00" }
+        Clear-Host
+        Write-Host ''
+        Write-Host '  Check hours' -ForegroundColor Cyan
+        Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+        Write-Host "  Current: $current"
+        Write-Host ''
+        Write-Host '  [1] All day'
+        Write-Host '  [2] 06:00 - 23:00'
+        Write-Host '  [3] 07:00 - 22:00'
+        Write-Host '  [C] Custom (enter start and end hour)'
+        Write-Host ''
+        Write-Host '  [B] Back' -ForegroundColor DarkGray
+        Write-Host ''
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        if ($choice -eq 'B') { return }
+        $newStart = $null; $newEnd = $null
+        switch ($choice) {
+            '1' { $newStart = 0; $newEnd = 0  }
+            '2' { $newStart = 6; $newEnd = 23 }
+            '3' { $newStart = 7; $newEnd = 22 }
+        }
+        if ($choice -eq 'C') {
+            $s = (Read-Host '  Start hour (0-23)').Trim()
+            $e = (Read-Host '  End hour (1-24)').Trim()
+            if ($s -match '^\d+$' -and $e -match '^\d+$' -and [int]$s -ge 0 -and [int]$s -le 23 -and [int]$e -ge 1 -and [int]$e -le 24 -and [int]$s -lt [int]$e) {
+                $newStart = [int]$s; $newEnd = [int]$e
+            } else { Write-Host '  Invalid range. Start must be less than end.' -ForegroundColor Red; Start-Sleep 2; continue }
+        }
+        if ($null -ne $newStart) {
+            Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $newStart $newEnd
+            $display = if ($newStart -eq 0 -and $newEnd -eq 0) { 'All day' } else { "$($newStart.ToString('D2')):00 - $($newEnd.ToString('D2')):00" }
+            Write-Host "  Check hours set to $display." -ForegroundColor Green
+            Start-Sleep 1; return
+        }
+    }
+}
+
 $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
 
 # Main loop
@@ -676,6 +778,8 @@ while ($true) {
         'W' { Run-Now }
         'G' { Show-LogCapMenu }
         'C' { Invoke-Recalculate }
+        'I' { Show-CheckIntervalMenu }
+        'O' { Show-CheckHoursMenu }
         'T' { Try-ScheduledTask }
         'U' { Invoke-Uninstall }
         'X' { exit }
