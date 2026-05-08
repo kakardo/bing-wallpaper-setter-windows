@@ -188,9 +188,10 @@ foreach ($phase in $retrySchedule) {
     if ($api) { break }
 }
 
-if (!$api) { Write-Log 'Error: API unreachable after all retries'; exit }
+if (!$api) { Write-Log 'Skipped | Network unavailable after all retries'; exit }
 
 $img  = $api.images[0]
+if (!$img -or !$img.urlbase -or !$img.startdate) { Write-Log 'Skipped | Bing returned a malformed response'; exit }
 
 $pics = [Environment]::GetFolderPath('MyPictures')
 if (!$pics -or !(Test-Path $pics)) { $pics = Join-Path $env:USERPROFILE 'Pictures' }
@@ -371,16 +372,21 @@ function Show-Status {
     $timesRun        = if ($stats) { $stats.TimesRun } else { 0 }
     $firstRun        = if ($stats -and $stats.FirstRun) { $stats.FirstRun } else { 'Unknown' }
     $lastRun         = if ($stats -and $stats.LastRun -and $stats.LastRun.Date) { "$($stats.LastRun.Date) $($stats.LastRun.Time)" } else { 'Never' }
-    $lastDownloaded  = if ($stats -and $stats.LastDownloaded -and $stats.LastDownloaded.Title) { "$($stats.LastDownloaded.Title) ($($stats.LastDownloaded.Date) $($stats.LastDownloaded.Time))" } else { 'Never' }
+    $dlTitle         = if ($stats -and $stats.LastDownloaded -and $stats.LastDownloaded.Title) { $stats.LastDownloaded.Title } else { $null }
+    $dlTitle         = if ($dlTitle -and $dlTitle.Length -gt 40) { $dlTitle.Substring(0, 37) + '...' } else { $dlTitle }
+    $lastDownloaded  = if ($dlTitle) { "$dlTitle ($($stats.LastDownloaded.Date) $($stats.LastDownloaded.Time))" } else { 'Never' }
     $versionDisplay       = if ($stats -and $stats.Version) { $stats.Version } else { 'Unknown' }
     $ci                   = if ($cfg) { $cfg.CheckInterval } else { 60 }
     $checkIntervalDisplay = if ($ci -lt 60) { "$ci min" } elseif ($ci -eq 60) { '1 hour' } else { "$([int]($ci / 60)) hours" }
     $cws                  = if ($cfg) { $cfg.CheckWindowStart } else { 0 }
     $cwe                  = if ($cfg) { $cfg.CheckWindowEnd }   else { 0 }
     $checkWindowDisplay   = if ($cws -eq 0 -and $cwe -eq 0) { 'All day' } else { "$($cws.ToString('D2')):00 - $($cwe.ToString('D2')):00" }
+    $labelWidth = 14  # "Downloaded  : ".Length
+    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "  $wallpapersSet set, $wallpaperCount saved") | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
+    $sep = [string][char]0x2500 * $sepWidth
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
-    Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+    Write-Host "  $sep" -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Status      : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green
     Write-Host "  Autostart   : $autostart"
@@ -400,7 +406,7 @@ function Show-Status {
     Write-Host "  Downloaded  : $lastDownloaded"
     Write-Host "  Version     : $versionDisplay"
     Write-Host ''
-    Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+    Write-Host "  $sep" -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
         Write-Host ''
         Write-Host '  Note: running via startup folder. Lock screen control' -ForegroundColor Yellow
