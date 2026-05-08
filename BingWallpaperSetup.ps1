@@ -137,6 +137,14 @@ function Write-Log($msg) {
     }
 }
 
+# Exit early if today's wallpaper is already set (hourly task deduplication)
+if (-not $Install) {
+    try {
+        $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+        if ($earlyStats -and $earlyStats.LatestFetch -eq (Get-Date).ToString('yyyy-MM-dd')) { exit }
+    } catch {}
+}
+
 # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
 $retrySchedule = @(
     @{ Interval = 10;  Count = 6  },
@@ -167,31 +175,6 @@ $img  = $api.images[0]
 $pics = [Environment]::GetFolderPath('MyPictures')
 if (!$pics -or !(Test-Path $pics)) { $pics = Join-Path $env:USERPROFILE 'Pictures' }
 if (!$pics) { exit }
-
-# If Bing has not yet published today's wallpaper, wait and retry at fixed intervals.
-# Skipped during installation to avoid a delay on first run.
-if (-not $Install) {
-    $today           = (Get-Date).ToString('yyyyMMdd')
-    $waitInterval    = 1800  # seconds between retries (30 minutes)
-    $waitMaxAttempts = 12    # maximum retries (6 hours total)
-    $waitAttempt     = 0
-
-    while ($img.startdate -ne $today -and $waitAttempt -lt $waitMaxAttempts) {
-        $waitAttempt++
-        Write-Log "Bing wallpaper not yet updated for today (current: $($img.startdate)). Waiting $($waitInterval / 60) min (attempt $waitAttempt/$waitMaxAttempts)."
-        Start-Sleep -Seconds $waitInterval
-        try {
-            $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop
-            $img = $api.images[0]
-        } catch {
-            Write-Log "Retry fetch failed: $_"
-        }
-    }
-
-    if ($img.startdate -ne $today) {
-        Write-Log "Today's wallpaper not available after $waitMaxAttempts retries. Using latest available ($($img.startdate))."
-    }
-}
 
 $year  = $img.startdate.Substring(0, 4)
 $month = $img.startdate.Substring(4, 2)
@@ -653,10 +636,12 @@ function Try-ScheduledTask {
     try {
         $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
         $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap)
-        $trigger   = New-ScheduledTaskTrigger -AtLogOn
-        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -EA Stop | Out-Null
+        $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
+        $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
+        $triggers      = @($triggerLogon, $triggerHourly)
+        $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+        $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -EA Stop | Out-Null
         Remove-Item $startupBatPath -EA SilentlyContinue
         Write-Host '  Scheduled task registered. Startup folder entry removed.' -ForegroundColor Green
         Write-Host '  Lock screen control is now available.' -ForegroundColor Green
@@ -734,13 +719,15 @@ try {
     try {
         $runLevel  = if ($setLockScreen) { 'Highest' } else { 'Limited' }
         $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
-        $trigger   = New-ScheduledTaskTrigger -AtLogOn
-        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
+        $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
+        $triggers      = @($triggerLogon, $triggerHourly)
+        $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+        $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-            Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
+            Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
         } else {
-            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
         }
         Write-Host "Scheduled task registered."
         $taskDone = $true
