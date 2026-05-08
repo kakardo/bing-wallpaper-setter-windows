@@ -85,6 +85,17 @@ if (Test-Path $scriptPath) {
     if ($choice -ne 'R') { exit }
 
     Write-Host ''
+    $overwriteData = $null
+    do {
+        Write-Host "  Keep existing stats and log? [Y/n]: " -NoNewline
+        $raw = (Read-Host).Trim().ToLower()
+        if ($raw -in $yesValues -or $raw -eq '') { $overwriteData = $false }
+        elseif ($raw -in $noValues)              { $overwriteData = $true }
+        else { Write-Host '  Please enter yes or no.' -ForegroundColor Red }
+    } while ($null -eq $overwriteData)
+    Write-Host ''
+} else {
+    $overwriteData = $false
 }
 
 # - Embedded wallpaper script - - - - - - - - - - - - - - - - #
@@ -807,9 +818,11 @@ try {
     if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
-    if (!(Test-Path (Join-Path $logsDir 'Stats.json'))) {
-        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = '' } | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $logsDir 'Stats.json') -Encoding UTF8
+    $statsPath = Join-Path $logsDir 'Stats.json'
+    if ($overwriteData -or !(Test-Path $statsPath)) {
+        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = '' } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
     }
+    if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
 
     Write-Host "Step 2: Writing scripts..."
