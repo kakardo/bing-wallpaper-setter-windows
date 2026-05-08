@@ -50,6 +50,8 @@ $settingsBat = Join-Path $installDir 'Settings.bat'
 $settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
 $logsDir     = Join-Path $installDir 'Data'
 $logFile     = Join-Path $logsDir 'Run.log'
+$yesValues   = @('yes','y','1','ja','a','aa')
+$noValues    = @('no','n','0','nej','ne','nee')
 
 # - Status check (if already installed) - - - - - - - - - - - #
 
@@ -537,8 +539,18 @@ function Invoke-Uninstall {
     $confirm = (Read-Host '  Type YES to confirm').Trim()
     if ($confirm -ne 'YES') { return }
     Write-Host ''
-    $deleteLog   = (Read-Host '  Also delete "Run.log"? [y/N]').Trim().ToUpper()
-    $deleteStats = (Read-Host '  Also delete "Stats.json"? [y/N]').Trim().ToUpper()
+    do {
+        $raw = (Read-Host '  Also delete "Run.log"? [y/N]').Trim().ToLower()
+        if ($raw -in $yesValues)          { $deleteLog = 'Y' }
+        elseif ($raw -in $noValues -or $raw -eq '') { $deleteLog = 'N' }
+        else { Write-Host '  Please enter yes or no.' -ForegroundColor Red; $deleteLog = $null }
+    } while ($null -eq $deleteLog)
+    do {
+        $raw = (Read-Host '  Also delete "Stats.json"? [y/N]').Trim().ToLower()
+        if ($raw -in $yesValues)          { $deleteStats = 'Y' }
+        elseif ($raw -in $noValues -or $raw -eq '') { $deleteStats = 'N' }
+        else { Write-Host '  Please enter yes or no.' -ForegroundColor Red; $deleteStats = $null }
+    } while ($null -eq $deleteStats)
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -EA SilentlyContinue
     Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat') -EA SilentlyContinue
     Write-Host ''
@@ -806,9 +818,14 @@ try {
     Set-Content -Path $settingsPs1  -Value $settingsPs1Content -Encoding UTF8  -ErrorAction Stop
 
     Write-Host ""
-    Write-Host "  Also update lock screen wallpaper? [Y/n]: " -NoNewline
-    $lsAnswer      = (Read-Host).Trim().ToUpper()
-    $setLockScreen = $lsAnswer -ne 'N'
+    $setLockScreen = $null
+    do {
+        Write-Host "  Also update lock screen wallpaper? [Y/n]: " -NoNewline
+        $raw = (Read-Host).Trim().ToLower()
+        if ($raw -in $yesValues -or $raw -eq '') { $setLockScreen = $true }
+        elseif ($raw -in $noValues)              { $setLockScreen = $false }
+        else { Write-Host '  Please enter yes or no.' -ForegroundColor Red }
+    } while ($null -eq $setLockScreen)
     Write-Host ""
 
     Write-Host "Step 3: Registering autostart..."
