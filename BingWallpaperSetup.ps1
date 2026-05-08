@@ -382,21 +382,23 @@ function Show-Status {
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Status     : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green
-    Write-Host "  Autostart  : $autostart"
-    Write-Host "  Market     : $market"
-    Write-Host "  Resolution : $resolution"
-    Write-Host "  Lock screen: $lockScreen"
-    Write-Host "  Log cap    : $logCapDisplay"
-    Write-Host "  Check every: $checkIntervalDisplay"
-    Write-Host "  Check hours: $checkWindowDisplay"
-    Write-Host "  First run  : $firstRun"
-    Write-Host "  Times run  : $timesRun"
-    Write-Host "  Wallpapers set: $wallpapersSet"
-    Write-Host "  Last run   : $lastRun"
-    Write-Host "  Wallpapers : $wallpaperCount saved"
-    Write-Host "  Downloaded : $lastDownloaded"
-    Write-Host "  Version    : $versionDisplay"
+    Write-Host '  Status      : ' -NoNewline; Write-Host 'Installed' -ForegroundColor Green
+    Write-Host "  Autostart   : $autostart"
+    Write-Host "  Market      : $market"
+    Write-Host "  Resolution  : $resolution"
+    Write-Host "  Lock screen : $lockScreen"
+    Write-Host "  Log cap     : $logCapDisplay"
+    Write-Host "  Check every : $checkIntervalDisplay"
+    Write-Host "  Check hours : $checkWindowDisplay"
+    Write-Host ''
+    Write-Host '  -- Stats --' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host "  First run   : $firstRun"
+    Write-Host "  Times run   : $timesRun"
+    Write-Host "  Wallpapers  : $wallpapersSet set, $wallpaperCount saved"
+    Write-Host "  Last run    : $lastRun"
+    Write-Host "  Downloaded  : $lastDownloaded"
+    Write-Host "  Version     : $versionDisplay"
     Write-Host ''
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
