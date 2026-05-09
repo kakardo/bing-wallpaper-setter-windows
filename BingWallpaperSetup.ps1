@@ -316,7 +316,14 @@ function Get-TaskConfig {
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     $a = $null; $source = $null
     if ($task) {
-        $a = $task.Actions[0].Arguments; $source = 'task'
+        $raw = $task.Actions[0].Arguments
+        if ($task.Actions[0].Execute -match 'wscript' -and (Test-Path $launcherPath)) {
+            $vbs = Get-Content $launcherPath -Raw
+            $a   = if ($vbs -match 'shell\.Run "powershell\.exe (.+)", 0') { $Matches[1] -replace '""', '"' } else { $raw }
+        } else {
+            $a = $raw
+        }
+        $source = 'task'
     } elseif (Test-Path $startupBatPath) {
         $a = Get-Content $startupBatPath; $source = 'startup'
     }
@@ -721,7 +728,9 @@ function Try-ScheduledTask {
     Write-Host '  Attempting to register scheduled task...' -ForegroundColor DarkGray
     try {
         $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd)
+        $psArgs    = Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
+        Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
+        $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
@@ -971,11 +980,11 @@ try {
 
     if ($verifyTask) {
         $checks++
-        $taskArgs = $verifyTask.Actions[0].Arguments
-        if ($taskArgs -match [regex]::Escape($scriptPath)) {
-            Write-InstallLog 'Check: Task script path matches ... OK'; $passed++
+        $vbsOk = (Test-Path $launcherPath) -and ((Get-Content $launcherPath -Raw) -match [regex]::Escape($scriptPath))
+        if ($vbsOk) {
+            Write-InstallLog 'Check: Launcher script path matches ... OK'; $passed++
         } else {
-            Write-InstallLog "Check: Task script path ... MISMATCH (task has $($taskArgs -replace '.*-File\s+\"?([^\"]+)\"?.*','$1'))"
+            Write-InstallLog 'Check: Launcher script path ... MISMATCH or launcher missing'
         }
     }
 
