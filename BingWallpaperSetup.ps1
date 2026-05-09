@@ -1,6 +1,6 @@
 # @author      Kardo Rostam
 # @date        2026-04-28
-# @version     2.4
+# @version     2.5.1
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
 #
@@ -118,7 +118,7 @@ param(
     [switch]$Install
 )
 
-$scriptVersion = '2.4'
+$scriptVersion = '2.5.1'
 $logPrefix     = if ($Install) { '[INSTALL] ' } else { '' }
 
 if (!$Resolution) {
