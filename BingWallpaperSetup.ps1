@@ -308,6 +308,8 @@ $launcherPath   = Join-Path $InstallDir 'Scripts\BingWallpaperLauncher.vbs'
 $logFile        = Join-Path $InstallDir 'Data\Run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
+$yesValues      = @('yes','y','1','ja','a','aa')
+$noValues       = @('no','n','0','nej','ne','nee')
 
 $script:cachedConfig = $null
 
