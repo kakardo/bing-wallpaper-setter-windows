@@ -45,8 +45,9 @@ if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROF
 if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
 $installDir  = Join-Path $pictures 'BingWallpaper'
 $scriptsDir  = Join-Path $installDir 'Scripts'
-$scriptPath  = Join-Path $scriptsDir 'BingWallpaper.ps1'
-$settingsBat = Join-Path $installDir 'Settings.bat'
+$scriptPath   = Join-Path $scriptsDir 'BingWallpaper.ps1'
+$launcherPath = Join-Path $scriptsDir 'BingWallpaperLauncher.vbs'
+$settingsBat  = Join-Path $installDir 'Settings.bat'
 $settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
 $logsDir     = Join-Path $installDir 'Data'
 $logFile     = Join-Path $logsDir 'Run.log'
@@ -303,6 +304,7 @@ try {
 
 $taskName       = 'BingWallpaperSetter'
 $scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
+$launcherPath   = Join-Path $InstallDir 'Scripts\BingWallpaperLauncher.vbs'
 $logFile        = Join-Path $InstallDir 'Data\Run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
@@ -330,6 +332,11 @@ function Get-TaskConfig {
     return $script:cachedConfig
 }
 
+function Build-VbsContent($psArgs) {
+    $escaped = $psArgs -replace '"', '""'
+    return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
+}
+
 function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0) {
     $a = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $market"
     if ($resolution)                                        { $a += " -Resolution $resolution" }
@@ -344,8 +351,10 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
     $script:cachedConfig = $null
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     if ($task) {
+        $psArgs        = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd
+        Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
         $runLevel      = if ($lockScreen) { 'Highest' } else { 'Limited' }
-        $action        = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd)
+        $action        = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $checkInterval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
@@ -846,6 +855,11 @@ while ($true) {
 
 # - Install - - - - - - - - - - - - - - - - - - - - - - - - - #
 
+function Build-VbsContent($psArgs) {
+    $escaped = $psArgs -replace '"', '""'
+    return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
+}
+
 try {
     Write-Host "Installing Bing Wallpaper Setter..."
     Write-Host ""
@@ -881,12 +895,13 @@ try {
     $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
     if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution $Resolution" }
     if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
+    Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII -ErrorAction Stop
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
 
     try {
         $runLevel  = if ($setLockScreen) { 'Highest' } else { 'Limited' }
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
+        $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
