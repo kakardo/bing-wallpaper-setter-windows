@@ -32,6 +32,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Optional lock screen wallpaper update (primary monitor only).
 - Retries automatically if the network is unavailable at startup.
 - Checks for new releases and shows a notice in the settings menu when one is available.
+- Optional shuffle mode — rotates randomly through your saved wallpapers on a configurable interval (default 15 min). A manifest file keeps track of recent picks so the same image is not repeated too soon.
 - `Settings.bat` for management and uninstall.
 
 > **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
@@ -60,6 +61,11 @@ Settings
 │       └── [B]   Back
 ├── [I] Check interval  (30 min / 1 h / 2 h / 4 h / custom)
 ├── [O] Check hours     (all day / 06-23 / 07-22 / custom range)
+├── [S] Shuffle
+│       ├── [1] Toggle on/off
+│       ├── [2] Change interval  (15 min / 30 min / 1 h / custom, min 5 min)
+│       ├── [3] Change history   (5 / 10 / 25 / 50 / custom, 1-100)
+│       └── [B]   Back
 ├── [W] Run now
 ├── [C] Recalculate stats
 ├── [V] View log        (last 10 entries)

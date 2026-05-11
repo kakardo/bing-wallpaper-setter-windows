@@ -116,6 +116,8 @@ param(
     [int]$CheckInterval = 60,
     [int]$CheckWindowStart = 0,
     [int]$CheckWindowEnd = 0,
+    [switch]$Shuffle,
+    [int]$ShuffleInterval = 15,
     [switch]$Install
 )
 
@@ -133,9 +135,10 @@ if (!$Resolution) {
 $wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); int active = 0; for (uint i = 0; i < count; i++) { try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); if (r.right - r.left > 0 && r.bottom - r.top > 0) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } } catch { } } return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
-$installRoot = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
-$logDir    = Join-Path $installRoot 'Data'
-$statsFile = Join-Path $installRoot 'Data\Stats.json'
+$installRoot  = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
+$logDir       = Join-Path $installRoot 'Data'
+$statsFile    = Join-Path $installRoot 'Data\Stats.json'
+$manifestFile = Join-Path $installRoot 'Data\Wallpapers.json'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
@@ -163,7 +166,8 @@ if (-not $Install) {
             if ($currentHour -lt $CheckWindowStart -or $currentHour -ge $CheckWindowEnd) { exit }
         }
         $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
-        if ($earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')) { exit }
+        $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
+        if ($todayDone -and -not $Shuffle) { exit }
     } catch {}
 }
 
@@ -240,6 +244,16 @@ try {
                 $stats.Version      = $scriptVersion
                 $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
             } catch {}
+            try {
+                $mf   = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                $list = @($mf.Wallpapers)
+                if ($file -notin $list) {
+                    $list += $file
+                    $mf.Wallpapers = $list
+                    $mf.Count      = $list.Count
+                    $mf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                }
+            } catch {}
         }
     } else {
         if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
@@ -268,6 +282,27 @@ try {
         }
     } elseif ($isNew -and !$SetLockScreen) {
         if ($Install) { Write-Log 'Lock screen skipped | Not enabled' }
+    }
+    if ($Shuffle -and -not $Install) {
+        try {
+            $mf = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { $null }
+            if ($mf -and $mf.Count -gt 0) {
+                $history = @(if ($mf.History) { $mf.History } else { @() })
+                $maxHist = [math]::Max(0, [math]::Min($mf.HistorySize, $mf.Count - 1))
+                $history = @($history | Select-Object -First $maxHist)
+                $attempts = 0
+                do { $idx = Get-Random -Maximum $mf.Count; $attempts++ } while ($idx -in $history -and $attempts -lt 100)
+                $shuffleFile = $mf.Wallpapers[$idx]
+                if (Test-Path $shuffleFile) {
+                    [WallpaperHelper]::SetOnAllMonitors($shuffleFile) | Out-Null
+                    Write-Log "Shuffle | $($idx + 1)/$($mf.Count) | `"$(Split-Path $shuffleFile -Leaf)`""
+                    $mf.History = @(@($idx) + $history | Select-Object -First $mf.HistorySize)
+                    $mf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                } else {
+                    Write-Log "Shuffle | File missing at index $idx, skipping"
+                }
+            }
+        } catch { Write-Log "Shuffle error: $_" }
     }
     if ($Install) { Write-Log 'Installation complete' }
 } catch {
@@ -308,6 +343,7 @@ $scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
 $launcherPath   = Join-Path $InstallDir 'Scripts\BingWallpaperLauncher.vbs'
 $logFile        = Join-Path $InstallDir 'Data\Run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
+$manifestFile   = Join-Path $InstallDir 'Data\Wallpapers.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 $yesValues      = @('yes','y','1','ja','a','aa')
 $noValues       = @('no','n','0','nej','ne','nee')
@@ -356,7 +392,9 @@ function Get-TaskConfig {
     $checkInterval    = if ($a -match '-CheckInterval\s+(\d+)')    { [int]$Matches[1] } else { 60 }
     $checkWindowStart = if ($a -match '-CheckWindowStart\s+(\d+)') { [int]$Matches[1] } else { 0 }
     $checkWindowEnd   = if ($a -match '-CheckWindowEnd\s+(\d+)')   { [int]$Matches[1] } else { 0 }
-    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; CheckInterval = $checkInterval; CheckWindowStart = $checkWindowStart; CheckWindowEnd = $checkWindowEnd; Source = $source }
+    $shuffle          = [bool]($a -match '-Shuffle')
+    $shuffleInterval  = if ($a -match '-ShuffleInterval\s+(\d+)')  { [int]$Matches[1] } else { 15 }
+    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; CheckInterval = $checkInterval; CheckWindowStart = $checkWindowStart; CheckWindowEnd = $checkWindowEnd; Shuffle = $shuffle; ShuffleInterval = $shuffleInterval; Source = $source }
     return $script:cachedConfig
 }
 
@@ -365,26 +403,31 @@ function Build-VbsContent($psArgs) {
     return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
 }
 
-function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0) {
+function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $false, $shuffleInterval = 15) {
     $a = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $market"
     if ($resolution)                                        { $a += " -Resolution $resolution" }
     if ($lockScreen)                                        { $a += ' -SetLockScreen' }
     if ($logCap -and $logCap -ne '0')                      { $a += " -LogCap $logCap" }
     if ($checkInterval -ne 60)                             { $a += " -CheckInterval $checkInterval" }
     if ($checkWindowStart -ne 0 -or $checkWindowEnd -ne 0) { $a += " -CheckWindowStart $checkWindowStart -CheckWindowEnd $checkWindowEnd" }
+    if ($shuffle)                                          { $a += " -Shuffle -ShuffleInterval $shuffleInterval" }
     return $a
 }
 
-function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0) {
+function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $null, $shuffleInterval = $null) {
+    $current = Get-TaskConfig
+    if ($null -eq $shuffle)         { $shuffle         = if ($current) { $current.Shuffle }         else { $false } }
+    if ($null -eq $shuffleInterval) { $shuffleInterval = if ($current) { $current.ShuffleInterval } else { 15 } }
     $script:cachedConfig = $null
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
+    $interval = if ($shuffle) { $shuffleInterval } else { $checkInterval }
     if ($task) {
-        $psArgs        = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd
+        $psArgs        = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval
         Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
         $runLevel      = if ($lockScreen) { 'Highest' } else { 'Limited' }
         $action        = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
-        $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $checkInterval) -RepetitionDuration (New-TimeSpan -Days 9999)
+        $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
         $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         try {
@@ -395,7 +438,7 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
             return $false
         }
     } elseif (Test-Path $startupBatPath) {
-        $psArgs = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd
+        $psArgs = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval
         Set-Content -Path $launcherPath   -Value (Build-VbsContent $psArgs) -Encoding ASCII
         Set-Content -Path $startupBatPath -Value "@echo off`r`nwscript.exe `"$launcherPath`"" -Encoding ASCII
         return $true
@@ -431,8 +474,15 @@ function Show-Status {
     $cws                  = if ($cfg) { $cfg.CheckWindowStart } else { 0 }
     $cwe                  = if ($cfg) { $cfg.CheckWindowEnd }   else { 0 }
     $checkWindowDisplay   = if ($cws -eq 0 -and $cwe -eq 0) { 'All day' } else { "$($cws.ToString('D2')):00 - $($cwe.ToString('D2')):00" }
+    $shuffleOn      = $cfg -and $cfg.Shuffle
+    $si             = if ($cfg -and $cfg.ShuffleInterval) { $cfg.ShuffleInterval } else { 15 }
+    $siDisplay      = if ($si -lt 60) { "$si min" } elseif ($si -eq 60) { '1 hour' } else { "$([int]($si / 60)) hours" }
+    $mfData         = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+    $mfCount        = if ($mfData) { $mfData.Count } else { 0 }
+    $mfHs           = if ($mfData -and $mfData.HistorySize) { $mfData.HistorySize } else { 10 }
+    $shuffleDisplay = if ($shuffleOn) { "On (every $siDisplay, history: $mfHs, $mfCount wallpapers)" } else { 'Off' }
     $labelWidth = 14  # "Downloaded  : ".Length
-    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved") | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
+    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved", $shuffleDisplay) | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
     $sep = [string][char]0x2500 * $sepWidth
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
@@ -446,6 +496,7 @@ function Show-Status {
     Write-Host "  Log cap     : $logCapDisplay"
     Write-Host "  Check every : $checkIntervalDisplay"
     Write-Host "  Check hours : $checkWindowDisplay"
+    Write-Host "  Shuffle     : $shuffleDisplay"
     Write-Host ''
     Write-Host '  -- Stats --' -ForegroundColor DarkGray
     Write-Host ''
@@ -470,8 +521,9 @@ function Show-Status {
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
     Write-Host '  [G] Log cap              [C] Recalculate stats' -ForegroundColor DarkGray
     Write-Host '  [I] Check interval       [O] Check hours' -ForegroundColor DarkGray
-    Write-Host '  [V] View log             [T] Switch to task' -ForegroundColor DarkGray
-    Write-Host '  [U] Uninstall            [X] Exit' -ForegroundColor DarkGray
+    Write-Host '  [S] Shuffle              [V] View log' -ForegroundColor DarkGray
+    Write-Host '  [T] Switch to task       [U] Uninstall' -ForegroundColor DarkGray
+    Write-Host '  [X] Exit' -ForegroundColor DarkGray
     Write-Host ''
 }
 
@@ -587,6 +639,7 @@ function Run-Now {
         if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
         if ($cfg.LockScreen)  { $psArgs += ' -SetLockScreen' }
         if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
+        if ($cfg.Shuffle) { $psArgs += " -Shuffle -ShuffleInterval $($cfg.ShuffleInterval)" }
     }
     Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
     $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
@@ -776,13 +829,121 @@ function Try-ScheduledTask {
 
 function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
-    $count  = (Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue).Count
+    $jpgs   = @(Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | Where-Object { $_.FullName -notlike "*\Data\*" } | Select-Object -ExpandProperty FullName)
+    $count  = $jpgs.Count
     $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = '' } }
     $stats.WallpaperCount = $count
     $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
+    $existing = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+    $hs = if ($existing -and $existing.HistorySize) { $existing.HistorySize } else { 10 }
+    [PSCustomObject]@{ Count = $count; HistorySize = $hs; History = @(); Wallpapers = $jpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
     $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
-    Write-Host '  Done.' -ForegroundColor Green
+    Write-Host "  Done. $count wallpaper(s) indexed." -ForegroundColor Green
     Start-Sleep 1
+}
+
+function Show-ShuffleMenu {
+    while ($true) {
+        $cfg = Get-TaskConfig
+        $mf  = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+        $shuffleOn = $cfg -and $cfg.Shuffle
+        $si        = if ($cfg -and $cfg.ShuffleInterval) { $cfg.ShuffleInterval } else { 15 }
+        $hs        = if ($mf -and $mf.HistorySize) { $mf.HistorySize } else { 10 }
+        $siDisplay = if ($si -lt 60) { "$si min" } elseif ($si -eq 60) { '1 hour' } else { "$([int]($si / 60)) hours" }
+        Clear-Host
+        Write-Host ''
+        Write-Host '  Shuffle' -ForegroundColor Cyan
+        Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+        Write-Host "  Status   : $(if ($shuffleOn) { 'On' } else { 'Off' })"
+        Write-Host "  Interval : $siDisplay"
+        Write-Host "  History  : $hs wallpapers"
+        Write-Host ''
+        Write-Host "  [1] Toggle $(if ($shuffleOn) { 'off' } else { 'on' })"
+        Write-Host '  [2] Change interval'
+        Write-Host '  [3] Change history size'
+        Write-Host ''
+        Write-Host '  [B] Back' -ForegroundColor DarkGray
+        Write-Host ''
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        if ($choice -eq 'B') { return }
+        if ($choice -eq '1') {
+            $newShuffle = -not $shuffleOn
+            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $newShuffle $si) {
+                Write-Host "  Shuffle $(if ($newShuffle) { 'enabled' } else { 'disabled' })." -ForegroundColor Green
+            }
+            Start-Sleep 1; return
+        }
+        if ($choice -eq '2') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  Shuffle interval' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $siDisplay"
+                Write-Host ''
+                Write-Host '  [1] 15 minutes'
+                Write-Host '  [2] 30 minutes'
+                Write-Host '  [3] 1 hour'
+                Write-Host '  [C] Custom (enter minutes)'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newInterval = switch ($sub) { '1' { 15 }; '2' { 30 }; '3' { 60 }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter interval in minutes (minimum 5)').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -ge 5) { $newInterval = [int]$entry }
+                    else { Write-Host '  Minimum 5 minutes.' -ForegroundColor Red; Start-Sleep 2; continue }
+                }
+                if ($null -ne $newInterval) {
+                    if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $shuffleOn $newInterval) {
+                        $d = if ($newInterval -lt 60) { "$newInterval min" } elseif ($newInterval -eq 60) { '1 hour' } else { "$([int]($newInterval / 60)) hours" }
+                        Write-Host "  Shuffle interval set to $d." -ForegroundColor Green
+                    }
+                    Start-Sleep 1; return
+                }
+            }
+        }
+        if ($choice -eq '3') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  Shuffle history' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $hs wallpapers"
+                Write-Host ''
+                Write-Host '  [1] 5'
+                Write-Host '  [2] 10'
+                Write-Host '  [3] 25'
+                Write-Host '  [4] 50'
+                Write-Host '  [C] Custom (1-100)'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newHs = switch ($sub) { '1' { 5 }; '2' { 10 }; '3' { 25 }; '4' { 50 }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter number (1-100)').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -ge 1 -and [int]$entry -le 100) { $newHs = [int]$entry }
+                    else { Write-Host '  Enter a number between 1 and 100.' -ForegroundColor Red; Start-Sleep 2; continue }
+                }
+                if ($null -ne $newHs) {
+                    try {
+                        $mfEdit = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                        $mfEdit.HistorySize = $newHs
+                        if ($mfEdit.History -and @($mfEdit.History).Count -gt $newHs) {
+                            $mfEdit.History = @($mfEdit.History | Select-Object -First $newHs)
+                        }
+                        $mfEdit | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                        Write-Host "  History size set to $newHs." -ForegroundColor Green
+                    } catch { Write-Host "  Error: $_" -ForegroundColor Red }
+                    Start-Sleep 1; return
+                }
+            }
+        }
+    }
 }
 
 function Show-CheckIntervalMenu {
@@ -881,6 +1042,7 @@ while ($true) {
         'C' { Invoke-Recalculate }
         'I' { Show-CheckIntervalMenu }
         'O' { Show-CheckHoursMenu }
+        'S' { Show-ShuffleMenu }
         'V' { Show-Log }
         'T' { Try-ScheduledTask }
         'U' { Invoke-Uninstall }
@@ -911,6 +1073,10 @@ try {
         $existing = Get-Content $statsPath -Raw | ConvertFrom-Json
         $existing.Version = $installerVersion
         $existing | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
+    }
+    $manifestPath = Join-Path $logsDir 'Wallpapers.json'
+    if ($overwriteData -or !(Test-Path $manifestPath)) {
+        [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     }
     if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
