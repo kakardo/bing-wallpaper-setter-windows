@@ -362,12 +362,6 @@ try {
     [void][W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
 } catch {}
 
-$spinnerPs.Stop()
-$spinnerPs.Dispose()
-$spinnerRs.Close()
-$spinnerRs.Dispose()
-[console]::Write("`r              `r")
-
 $taskName       = 'BingWallpaperSetter'
 $scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
 $launcherPath   = Join-Path $InstallDir 'Scripts\BingWallpaperLauncher.vbs'
@@ -1059,6 +1053,12 @@ function Show-CheckHoursMenu {
 }
 
 $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+Get-TaskConfig | Out-Null
+$spinnerPs.Stop()
+$spinnerPs.Dispose()
+$spinnerRs.Close()
+$spinnerRs.Dispose()
+[console]::Write("`r              `r")
 
 # Main loop
 while ($true) {
@@ -1132,13 +1132,18 @@ try {
     } while ($null -eq $setLockScreen)
     Write-Host ""
 
-    Write-Host "Step 3: Registering autostart..."
     $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
     if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution $Resolution" }
     if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
     Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII -ErrorAction Stop
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
+
+    $instSpinRs = [runspacefactory]::CreateRunspace(); $instSpinRs.Open()
+    $instSpinPs = [powershell]::Create(); $instSpinPs.Runspace = $instSpinRs
+    $instSpinPs.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 3: Registering autostart $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+    $instSpinPs.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
 
     try {
         $runLevel  = if ($setLockScreen) { 'Highest' } else { 'Limited' }
@@ -1153,10 +1158,14 @@ try {
         } else {
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
         }
-        Write-Host "Scheduled task registered."
+        $instSpinPs.Stop(); $instSpinPs.Dispose(); $instSpinRs.Close(); $instSpinRs.Dispose()
+        [console]::Write("`r                                              `r")
+        Write-Host "Step 3: Autostart registered."
         $taskDone = $true
     } catch {
-        Write-Host "Scheduled task blocked - using startup folder instead."
+        $instSpinPs.Stop(); $instSpinPs.Dispose(); $instSpinRs.Close(); $instSpinRs.Dispose()
+        [console]::Write("`r                                              `r")
+        Write-Host "Step 3: Scheduled task blocked - using startup folder instead."
     }
 
     $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
