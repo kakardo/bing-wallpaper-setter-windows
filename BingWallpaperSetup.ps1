@@ -312,7 +312,20 @@ $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallp
 $yesValues      = @('yes','y','1','ja','a','aa')
 $noValues       = @('no','n','0','nej','ne','nee')
 
-$script:cachedConfig = $null
+$script:cachedConfig    = $null
+$script:updateAvailable = $null
+
+function Get-UpdateInfo {
+    if ($null -ne $script:updateAvailable) { return }
+    try {
+        $rel    = Invoke-RestMethod 'https://api.github.com/repos/kakardo/bing-wallpaper-setter-windows/releases/latest' -TimeoutSec 3 -EA Stop
+        $latest = $rel.tag_name -replace '^v', ''
+        $curr   = if ($script:cachedStats -and $script:cachedStats.Version) { $script:cachedStats.Version } else { '0.0.0' }
+        $script:updateAvailable = if ([System.Version]$latest -gt [System.Version]$curr) { "v$latest" } else { '' }
+    } catch {
+        $script:updateAvailable = ''
+    }
+}
 
 function Get-TaskConfig {
     if ($null -ne $script:cachedConfig) { return $script:cachedConfig }
@@ -328,7 +341,12 @@ function Get-TaskConfig {
         }
         $source = 'task'
     } elseif (Test-Path $startupBatPath) {
-        $a = Get-Content $startupBatPath; $source = 'startup'
+        if (Test-Path $launcherPath) {
+            $vbs = Get-Content $launcherPath -Raw
+            $a   = if ($vbs -match 'shell\.Run "powershell\.exe (.+)", 0') { $Matches[1] -replace '""', '"' } else { $null }
+        }
+        if (!$a) { $a = Get-Content $startupBatPath }
+        $source = 'startup'
     }
     if (!$a) { return $null }
     $market           = if ($a -match '-Market\s+(\S+)')           { $Matches[1] } else { 'en-US' }
@@ -377,7 +395,9 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
             return $false
         }
     } elseif (Test-Path $startupBatPath) {
-        Set-Content -Path $startupBatPath -Value "powershell.exe $(Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd)" -Encoding ASCII
+        $psArgs = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd
+        Set-Content -Path $launcherPath   -Value (Build-VbsContent $psArgs) -Encoding ASCII
+        Set-Content -Path $startupBatPath -Value "@echo off`r`nwscript.exe `"$launcherPath`"" -Encoding ASCII
         return $true
     } else {
         Write-Host '  Error: no autostart method found.' -ForegroundColor Red
@@ -435,6 +455,10 @@ function Show-Status {
     Write-Host "  Last run    : $lastRun"
     Write-Host "  Downloaded  : $lastDownloaded"
     Write-Host "  Version     : $versionDisplay"
+    Get-UpdateInfo
+    if ($script:updateAvailable) {
+        Write-Host "  Update      : " -NoNewline; Write-Host "$($script:updateAvailable) available" -ForegroundColor Yellow
+    }
     Write-Host ''
     Write-Host "  $sep" -ForegroundColor DarkGray
     if ($cfg -and $cfg.Source -eq 'startup') {
@@ -936,10 +960,7 @@ try {
 
     $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
     if (!$taskDone) {
-        $startupContent = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
-        if ($PSBoundParameters.ContainsKey('Resolution')) { $startupContent += " -Resolution $Resolution" }
-        if ($setLockScreen) { $startupContent += ' -SetLockScreen' }
-        Set-Content -Path $startupBatPath -Value $startupContent -Encoding ASCII -ErrorAction Stop
+        Set-Content -Path $startupBatPath -Value "@echo off`r`nwscript.exe `"$launcherPath`"" -Encoding ASCII -ErrorAction Stop
         Write-Host "Added to startup folder."
     }
 
