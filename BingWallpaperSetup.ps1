@@ -722,10 +722,15 @@ function Invoke-Uninstall {
     $dataPath    = Join-Path $InstallDir 'Data'
     $logPath     = Join-Path $dataPath 'Run.log'
     $statsPath   = Join-Path $dataPath 'Stats.json'
+    $manifestPath = Join-Path $dataPath 'Wallpapers.json'
+    $updatePath   = Join-Path $dataPath 'UpdateInfo.json'
     $cleanupCmd  = "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`""
     if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { $cleanupCmd += " & rmdir /s /q `"$dataPath`"" }
-    elseif ($deleteLog -eq 'Y')   { $cleanupCmd += " & del /f /q `"$logPath`"" }
-    elseif ($deleteStats -eq 'Y') { $cleanupCmd += " & del /f /q `"$statsPath`"" }
+    else {
+        if ($deleteLog -eq 'Y')   { $cleanupCmd += " & del /f /q `"$logPath`"" }
+        if ($deleteStats -eq 'Y') { $cleanupCmd += " & del /f /q `"$statsPath`"" }
+        $cleanupCmd += " & del /f /q `"$manifestPath`" & del /f /q `"$updatePath`""
+    }
     Start-Process cmd -ArgumentList $cleanupCmd -WindowStyle Hidden
     Start-Sleep 3
     exit
@@ -863,7 +868,7 @@ function Try-ScheduledTask {
 
 function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
-    $jpgs   = @(Get-ChildItem $InstallDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | Where-Object { $_.FullName -notlike "*\Data\*" } | Select-Object -ExpandProperty FullName)
+    $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Filter '*.jpg' -EA SilentlyContinue | Select-Object -ExpandProperty FullName)
     $count  = $jpgs.Count
     $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = '' } }
     $stats.WallpaperCount = $count
@@ -1125,7 +1130,7 @@ try {
     $existingMf      = if (!$overwriteData -and (Test-Path $manifestPath)) { try { Get-Content $manifestPath -Raw | ConvertFrom-Json } catch { $null } } else { $null }
     $mfHs            = if ($existingMf -and $existingMf.HistorySize) { $existingMf.HistorySize } else { 10 }
     $mfHistory       = if ($existingMf -and $existingMf.History)     { $existingMf.History }     else { @() }
-    $existingJpgs    = @(Get-ChildItem $installDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | Where-Object { $_.FullName -notlike "*\Data\*" } | Select-Object -ExpandProperty FullName)
+    $existingJpgs    = @(Get-ChildItem $wallpapersDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | Select-Object -ExpandProperty FullName)
     [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
