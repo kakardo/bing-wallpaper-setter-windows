@@ -27,7 +27,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 
 - Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
 - Updates the wallpaper on all connected monitors.
-- Saves wallpapers organised by year and month under `Pictures\BingWallpaper\`.
+- Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`.
 - Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
 - Optional lock screen wallpaper update (primary monitor only).
 - Retries automatically if the network is unavailable at startup.

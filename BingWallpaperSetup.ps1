@@ -202,15 +202,11 @@ if ($Install) {
 $img  = $api.images[0]
 if (!$img -or !$img.urlbase -or !$img.startdate) { Write-Log 'Skipped | Bing returned a malformed response'; exit }
 
-$pics = [Environment]::GetFolderPath('MyPictures')
-if (!$pics -or !(Test-Path $pics)) { $pics = Join-Path $env:USERPROFILE 'Pictures' }
-if (!$pics) { exit }
-
 $year  = $img.startdate.Substring(0, 4)
 $month = $img.startdate.Substring(4, 2)
 $day   = $img.startdate.Substring(6, 2)
 
-$dir = Join-Path $pics "BingWallpaper\$year\$month"
+$dir = Join-Path $installRoot "Wallpapers\$year\$month"
 if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
 $name = if ($img.title) { $img.title -replace '[\\/:*?"<>|]', '_' } else { 'Bing' }
@@ -1063,9 +1059,11 @@ try {
     Write-Host ""
 
     Write-Host "Step 1: Creating folders..."
-    if (!(Test-Path $installDir))   { New-Item -ItemType Directory -Path $installDir   -Force -ErrorAction Stop | Out-Null }
-    if (!(Test-Path $scriptsDir))   { New-Item -ItemType Directory -Path $scriptsDir   -Force -ErrorAction Stop | Out-Null }
-    if (!(Test-Path $logsDir))      { New-Item -ItemType Directory -Path $logsDir      -Force -ErrorAction Stop | Out-Null }
+    $wallpapersDir = Join-Path $installDir 'Wallpapers'
+    if (!(Test-Path $installDir))    { New-Item -ItemType Directory -Path $installDir    -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $scriptsDir))    { New-Item -ItemType Directory -Path $scriptsDir    -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $logsDir))       { New-Item -ItemType Directory -Path $logsDir       -Force -ErrorAction Stop | Out-Null }
+    if (!(Test-Path $wallpapersDir)) { New-Item -ItemType Directory -Path $wallpapersDir -Force -ErrorAction Stop | Out-Null }
     $statsPath = Join-Path $logsDir 'Stats.json'
     if ($overwriteData -or !(Test-Path $statsPath)) {
         [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = $installerVersion } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
@@ -1074,10 +1072,12 @@ try {
         $existing.Version = $installerVersion
         $existing | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
     }
-    $manifestPath = Join-Path $logsDir 'Wallpapers.json'
-    if ($overwriteData -or !(Test-Path $manifestPath)) {
-        [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
-    }
+    $manifestPath    = Join-Path $logsDir 'Wallpapers.json'
+    $existingMf      = if (!$overwriteData -and (Test-Path $manifestPath)) { try { Get-Content $manifestPath -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+    $mfHs            = if ($existingMf -and $existingMf.HistorySize) { $existingMf.HistorySize } else { 10 }
+    $mfHistory       = if ($existingMf -and $existingMf.History)     { $existingMf.History }     else { @() }
+    $existingJpgs    = @(Get-ChildItem $installDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | Where-Object { $_.FullName -notlike "*\Data\*" } | Select-Object -ExpandProperty FullName)
+    [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
 
