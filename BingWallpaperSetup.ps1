@@ -135,10 +135,11 @@ if (!$Resolution) {
 $wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); int active = 0; for (uint i = 0; i < count; i++) { try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); if (r.right - r.left > 0 && r.bottom - r.top > 0) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } } catch { } } return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
-$installRoot  = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
-$logDir       = Join-Path $installRoot 'Data'
-$statsFile    = Join-Path $installRoot 'Data\Stats.json'
-$manifestFile = Join-Path $installRoot 'Data\Wallpapers.json'
+$installRoot   = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
+$logDir        = Join-Path $installRoot 'Data'
+$statsFile     = Join-Path $installRoot 'Data\Stats.json'
+$manifestFile  = Join-Path $installRoot 'Data\Wallpapers.json'
+$updateFile    = Join-Path $installRoot 'Data\UpdateInfo.json'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
@@ -300,6 +301,16 @@ try {
             }
         } catch { Write-Log "Shuffle error: $_" }
     }
+    if (-not $Install) {
+        try {
+            $today      = (Get-Date).ToString('yyyy-MM-dd')
+            $updateInfo = if (Test-Path $updateFile) { Get-Content $updateFile -Raw | ConvertFrom-Json } else { $null }
+            if (-not $updateInfo -or $updateInfo.CheckedAt -ne $today) {
+                $rel = Invoke-RestMethod 'https://api.github.com/repos/kakardo/bing-wallpaper-setter-windows/releases/latest' -TimeoutSec 5 -EA Stop
+                [PSCustomObject]@{ LatestVersion = ($rel.tag_name -replace '^v', ''); CheckedAt = $today } | ConvertTo-Json | Set-Content $updateFile -Encoding UTF8
+            }
+        } catch {}
+    }
     if ($Install) { Write-Log 'Installation complete' }
 } catch {
     Write-Log "Error: $_"
@@ -340,6 +351,7 @@ $launcherPath   = Join-Path $InstallDir 'Scripts\BingWallpaperLauncher.vbs'
 $logFile        = Join-Path $InstallDir 'Data\Run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $manifestFile   = Join-Path $InstallDir 'Data\Wallpapers.json'
+$updateFile     = Join-Path $InstallDir 'Data\UpdateInfo.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 $yesValues      = @('yes','y','1','ja','a','aa')
 $noValues       = @('no','n','0','nej','ne','nee')
@@ -350,10 +362,10 @@ $script:updateAvailable = $null
 function Get-UpdateInfo {
     if ($null -ne $script:updateAvailable) { return }
     try {
-        $rel    = Invoke-RestMethod 'https://api.github.com/repos/kakardo/bing-wallpaper-setter-windows/releases/latest' -TimeoutSec 3 -EA Stop
-        $latest = $rel.tag_name -replace '^v', ''
+        $info   = if (Test-Path $updateFile) { Get-Content $updateFile -Raw | ConvertFrom-Json } else { $null }
+        $latest = if ($info -and $info.LatestVersion) { $info.LatestVersion } else { $null }
         $curr   = if ($script:cachedStats -and $script:cachedStats.Version) { $script:cachedStats.Version } else { '0.0.0' }
-        $script:updateAvailable = if ([System.Version]$latest -gt [System.Version]$curr) { "v$latest" } else { '' }
+        $script:updateAvailable = if ($latest -and [System.Version]$latest -gt [System.Version]$curr) { "v$latest" } else { '' }
     } catch {
         $script:updateAvailable = ''
     }
