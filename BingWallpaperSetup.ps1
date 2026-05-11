@@ -337,6 +337,22 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+Clear-Host
+
+$spinnerRs = [runspacefactory]::CreateRunspace()
+$spinnerRs.Open()
+$spinnerPs = [powershell]::Create()
+$spinnerPs.Runspace = $spinnerRs
+$spinnerPs.AddScript({
+    $chars = @('|', '/', '-', '\')
+    $i = 0
+    while ($true) {
+        [console]::Write("`r  Loading $($chars[$i++ % 4])")
+        Start-Sleep -Milliseconds 120
+    }
+}) | Out-Null
+$spinnerHandle = $spinnerPs.BeginInvoke()
+
 # Disable QuickEdit mode so accidental clicks don't pause the script
 try {
     Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n); [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m); [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);' -Name K -Namespace W
@@ -344,6 +360,12 @@ try {
     [W.K]::GetConsoleMode($h, [ref]$m)
     [W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
 } catch {}
+
+$spinnerPs.Stop()
+$spinnerPs.Dispose()
+$spinnerRs.Close()
+$spinnerRs.Dispose()
+[console]::Write("`r              `r")
 
 $taskName       = 'BingWallpaperSetter'
 $scriptPath     = Join-Path $InstallDir 'Scripts\BingWallpaper.ps1'
