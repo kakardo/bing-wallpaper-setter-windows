@@ -23,22 +23,28 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-# Disable QuickEdit mode so accidental clicks don't pause the script
-try {
-    $k = Add-Type -MemberDefinition @'
-[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
-[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
-[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
-'@ -Name K -Namespace W -PassThru
-    $h = [W.K]::GetStdHandle(-10); $m = 0
-    [W.K]::GetConsoleMode($h, [ref]$m)
-    [W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
-} catch {}
-
 # Allow this session to load .ps1 files even when the system policy is Restricted
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
 
 Clear-Host
+
+$initSpinRs = [runspacefactory]::CreateRunspace(); $initSpinRs.Open()
+$initSpinPs = [powershell]::Create(); $initSpinPs.Runspace = $initSpinRs
+$initSpinPs.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Loading $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+$initSpinPs.BeginInvoke() | Out-Null
+Start-Sleep -Milliseconds 80
+
+# Disable QuickEdit mode so accidental clicks don't pause the script
+try {
+    Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@ -Name K -Namespace W
+    $h = [W.K]::GetStdHandle(-10); $m = 0
+    [void][W.K]::GetConsoleMode($h, [ref]$m)
+    [void][W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
+} catch {}
 
 $installerVersion = '2.5.1'
 $pictures = [Environment]::GetFolderPath('MyPictures')
@@ -64,6 +70,9 @@ if (Test-Path $scriptPath) {
     $hasSettings    = Test-Path $settingsPs1
     $partialInstall = -not $hasAutostart -or -not $hasSettings
 
+    $initSpinPs.Stop(); $initSpinPs.Dispose(); $initSpinRs.Close(); $initSpinRs.Dispose()
+    $initSpinPs = $null
+    [console]::Write("`r              `r")
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
@@ -1090,10 +1099,15 @@ function Build-VbsContent($psArgs) {
 }
 
 try {
+    if ($initSpinPs) { $initSpinPs.Stop(); $initSpinPs.Dispose(); $initSpinRs.Close(); $initSpinRs.Dispose(); [console]::Write("`r              `r") }
     Write-Host "Installing Bing Wallpaper Setter..."
     Write-Host ""
 
-    Write-Host "Step 1: Creating folders..."
+    $s1Rs = [runspacefactory]::CreateRunspace(); $s1Rs.Open()
+    $s1Ps = [powershell]::Create(); $s1Ps.Runspace = $s1Rs
+    $s1Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 1: Creating folders $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+    $s1Ps.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
     $wallpapersDir = Join-Path $installDir 'Wallpapers'
     if (!(Test-Path $installDir))    { New-Item -ItemType Directory -Path $installDir    -Force -ErrorAction Stop | Out-Null }
     if (!(Test-Path $scriptsDir))    { New-Item -ItemType Directory -Path $scriptsDir    -Force -ErrorAction Stop | Out-Null }
@@ -1115,11 +1129,21 @@ try {
     [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
+    $s1Ps.Stop(); $s1Ps.Dispose(); $s1Rs.Close(); $s1Rs.Dispose()
+    [console]::Write("`r                                `r")
+    Write-Host "Step 1: Folders ready."
 
-    Write-Host "Step 2: Writing scripts..."
+    $s2Rs = [runspacefactory]::CreateRunspace(); $s2Rs.Open()
+    $s2Ps = [powershell]::Create(); $s2Ps.Runspace = $s2Rs
+    $s2Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 2: Writing scripts $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+    $s2Ps.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
     Set-Content -Path $scriptPath   -Value $wallpaperScript    -Encoding UTF8  -ErrorAction Stop
     Set-Content -Path $settingsBat  -Value $settingsBatContent -Encoding ASCII -ErrorAction Stop
     Set-Content -Path $settingsPs1  -Value $settingsPs1Content -Encoding UTF8  -ErrorAction Stop
+    $s2Ps.Stop(); $s2Ps.Dispose(); $s2Rs.Close(); $s2Rs.Dispose()
+    [console]::Write("`r                             `r")
+    Write-Host "Step 2: Scripts written."
 
     Write-Host ""
     $setLockScreen = $null
@@ -1179,7 +1203,11 @@ try {
     Write-Host "Open Settings.bat in the BingWallpaper folder to manage settings or uninstall."
     Write-Host ""
 
-    Write-Host "Step 3.5: Verifying installation..."
+    $s35Rs = [runspacefactory]::CreateRunspace(); $s35Rs.Open()
+    $s35Ps = [powershell]::Create(); $s35Ps.Runspace = $s35Rs
+    $s35Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 3.5: Verifying $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+    $s35Ps.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
     function Write-InstallLog($msg) {
         "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] $msg" | Add-Content $logFile -Encoding UTF8
     }
@@ -1226,30 +1254,35 @@ try {
         }
     }
 
+    $s35Ps.Stop(); $s35Ps.Dispose(); $s35Rs.Close(); $s35Rs.Dispose()
+    [console]::Write("`r                             `r")
     if ($passed -eq $checks) {
         Write-InstallLog "Verification passed ($passed/$checks)"
-        Write-Host "Verification passed ($passed/$checks)."
+        Write-Host "Step 3.5: Verification passed ($passed/$checks)."
     } else {
         Write-InstallLog "Verification completed with warnings ($passed/$checks)"
-        Write-Host "Verification completed with warnings ($passed/$checks) - check the log." -ForegroundColor Yellow
+        Write-Host "Step 3.5: Verification warnings ($passed/$checks) - check the log." -ForegroundColor Yellow
     }
     Write-Host ""
 
-    Write-Host "Step 4: Setting today's wallpaper..."
-    Write-Host "  Downloading..." -NoNewline
+    $s4Rs = [runspacefactory]::CreateRunspace(); $s4Rs.Open()
+    $s4Ps = [powershell]::Create(); $s4Ps.Runspace = $s4Rs
+    $s4Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 4: Downloading wallpaper $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+    $s4Ps.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
     if ($setLockScreen) {
         if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen -Install 6>$null } else { & $scriptPath -Market $Market -SetLockScreen -Install 6>$null }
     } else {
         if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -Install 6>$null } else { & $scriptPath -Market $Market -Install 6>$null }
     }
+    $s4Ps.Stop(); $s4Ps.Dispose(); $s4Rs.Close(); $s4Rs.Dispose()
+    [console]::Write("`r                                     `r")
     $lastLog = if (Test-Path $logFile) { Get-Content $logFile | Select-Object -Last 1 } else { '' }
     if ($lastLog -match 'Network unavailable at install time') {
-        Write-Host ""
-        Write-Host "  Network unavailable. Skipping for now." -ForegroundColor Yellow
-        Write-Host "  The wallpaper will be set automatically at next logon." -ForegroundColor DarkGray
+        Write-Host "Step 4: Network unavailable, will retry at logon." -ForegroundColor Yellow
     } else {
         $dlTitle = if ($lastLog -match '"([^"]+)"') { $Matches[1] } else { $null }
-        Write-Host " done." -ForegroundColor Green
+        Write-Host "Step 4: Wallpaper set." -ForegroundColor Green
         if ($dlTitle) { Write-Host "  $dlTitle" -ForegroundColor DarkGray }
     }
 
