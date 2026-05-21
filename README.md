@@ -65,6 +65,7 @@ Settings
 │       ├── [1] Toggle on/off
 │       ├── [2] Change interval  (15 min / 30 min / 1 h / custom, min 5 min)
 │       ├── [3] Change history   (5 / 10 / 25 / 50 / custom, 1-100)
+│       ├── [4] Recalculate wallpaper list
 │       └── [B]   Back
 ├── [W] Run now
 ├── [C] Recalculate stats
@@ -75,6 +76,20 @@ Settings
 ```
 
 Market and resolution changes take effect at the next logon or hourly check, or immediately via **[W] Run now**.
+
+## Shuffle mode
+
+Shuffle rotates through your saved Bing wallpapers at a set interval rather than waiting for the next daily download. It picks randomly from your library, avoiding recently shown images so you don't see the same wallpaper twice in a row.
+
+**To enable:** open `Settings.bat` and choose **[S] Shuffle**, then **[1] Toggle on**.
+
+**Interval** — how often the wallpaper changes (default 15 min, minimum 5 min). Change via **[S] → [2]**.
+
+**History size** — how many recent wallpapers are excluded from the next pick (default 10). If you have 50 saved wallpapers and history is set to 10, the next pick is drawn from the other 40. Change via **[S] → [3]**.
+
+**Recalculate** — rescans your Wallpapers folder and rebuilds the index. Use this if you have added or removed images manually. Available via **[S] → [4]**.
+
+Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day.
 
 ## Parameters
 

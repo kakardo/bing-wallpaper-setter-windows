@@ -901,6 +901,7 @@ function Show-ShuffleMenu {
         Write-Host "  [1] Toggle $(if ($shuffleOn) { 'off' } else { 'on' })"
         Write-Host '  [2] Change interval'
         Write-Host '  [3] Change history size'
+        Write-Host '  [4] Recalculate wallpaper list'
         Write-Host ''
         Write-Host '  [B] Back' -ForegroundColor DarkGray
         Write-Host ''
@@ -983,6 +984,7 @@ function Show-ShuffleMenu {
                 }
             }
         }
+        if ($choice -eq '4') { Invoke-Recalculate }
     }
 }
 
