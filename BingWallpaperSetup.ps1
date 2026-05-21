@@ -293,6 +293,15 @@ try {
     if ($Shuffle -and -not $Install) {
         try {
             $mf = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { $null }
+            if ($mf -and $mf.RecalcInterval -and $mf.RecalcInterval -gt 0) {
+                $lastRecalc = if ($mf.LastRecalc) { try { [datetime]::ParseExact($mf.LastRecalc, 'yyyy-MM-dd', $null) } catch { [datetime]::MinValue } } else { [datetime]::MinValue }
+                if (((Get-Date) - $lastRecalc).TotalDays -ge $mf.RecalcInterval) {
+                    $rjpgs = @(Get-ChildItem (Join-Path $installRoot 'Wallpapers') -Recurse -Filter '*.jpg' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installRoot.Length + 1) })
+                    $mf.Count = $rjpgs.Count; $mf.Wallpapers = $rjpgs; $mf.LastRecalc = (Get-Date).ToString('yyyy-MM-dd')
+                    $mf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                    Write-Log "Auto-recalculate | $($rjpgs.Count) wallpaper(s) indexed"
+                }
+            }
             if ($mf -and $mf.Count -gt 0) {
                 $history = @(if ($mf.History) { $mf.History } else { @() })
                 $maxHist = [math]::Max(0, [math]::Min($mf.HistorySize, $mf.Count - 1))
@@ -876,7 +885,8 @@ function Invoke-Recalculate {
     $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
     $existing = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
     $hs = if ($existing -and $existing.HistorySize) { $existing.HistorySize } else { 10 }
-    [PSCustomObject]@{ Count = $count; HistorySize = $hs; History = @(); Wallpapers = $jpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+    $ri = if ($existing -and $existing.RecalcInterval -ne $null) { $existing.RecalcInterval } else { 7 }
+    [PSCustomObject]@{ Count = $count; HistorySize = $hs; History = @(); RecalcInterval = $ri; LastRecalc = (Get-Date).ToString('yyyy-MM-dd'); Wallpapers = $jpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
     $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
     Write-Host "  Done. $count wallpaper(s) indexed." -ForegroundColor Green
     Start-Sleep 1
@@ -889,6 +899,8 @@ function Show-ShuffleMenu {
         $shuffleOn = $cfg -and $cfg.Shuffle
         $si        = if ($cfg -and $cfg.ShuffleInterval) { $cfg.ShuffleInterval } else { 15 }
         $hs        = if ($mf -and $mf.HistorySize) { $mf.HistorySize } else { 10 }
+        $ri        = if ($mf -and $mf.RecalcInterval -ne $null) { $mf.RecalcInterval } else { 7 }
+        $riDisplay = if ($ri -eq 0) { 'Off' } elseif ($ri -eq 1) { 'Every day' } else { "Every $ri days" }
         $siDisplay = if ($si -lt 60) { "$si min" } elseif ($si -eq 60) { '1 hour' } else { "$([int]($si / 60)) hours" }
         Clear-Host
         Write-Host ''
@@ -897,11 +909,13 @@ function Show-ShuffleMenu {
         Write-Host "  Status   : $(if ($shuffleOn) { 'On' } else { 'Off' })"
         Write-Host "  Interval : $siDisplay"
         Write-Host "  History  : $hs wallpapers"
+        Write-Host "  Recalc   : $riDisplay"
         Write-Host ''
         Write-Host "  [1] Toggle $(if ($shuffleOn) { 'off' } else { 'on' })"
         Write-Host '  [2] Change interval'
         Write-Host '  [3] Change history size'
         Write-Host '  [4] Recalculate wallpaper list'
+        Write-Host '  [5] Change auto-recalculate interval'
         Write-Host ''
         Write-Host '  [B] Back' -ForegroundColor DarkGray
         Write-Host ''
@@ -985,6 +999,44 @@ function Show-ShuffleMenu {
             }
         }
         if ($choice -eq '4') { Invoke-Recalculate }
+        if ($choice -eq '5') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  Auto-recalculate interval' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $riDisplay"
+                Write-Host ''
+                Write-Host '  [1] Every day'
+                Write-Host '  [2] Every 7 days'
+                Write-Host '  [3] Every 30 days'
+                Write-Host '  [C] Custom (enter days)'
+                Write-Host '  [0] Off'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newRi = switch ($sub) { '1' { 1 }; '2' { 7 }; '3' { 30 }; '0' { 0 }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter interval in days (minimum 1)').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -ge 1) { $newRi = [int]$entry }
+                    else { Write-Host '  Minimum 1 day.' -ForegroundColor Red; Start-Sleep 2; continue }
+                }
+                if ($null -ne $newRi) {
+                    try {
+                        $mfEdit = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { $null }
+                        if ($mfEdit) {
+                            if (-not $mfEdit.PSObject.Properties['RecalcInterval']) { $mfEdit | Add-Member -NotePropertyName RecalcInterval -NotePropertyValue $newRi -Force } else { $mfEdit.RecalcInterval = $newRi }
+                            $mfEdit | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                            $d = if ($newRi -eq 0) { 'Off' } elseif ($newRi -eq 1) { 'Every day' } else { "Every $newRi days" }
+                            Write-Host "  Auto-recalculate set to: $d." -ForegroundColor Green
+                        }
+                    } catch { Write-Host "  Error: $_" -ForegroundColor Red }
+                    Start-Sleep 1; break
+                }
+            }
+        }
     }
 }
 
@@ -1148,10 +1200,11 @@ try {
     }
     $manifestPath    = Join-Path $logsDir 'Wallpapers.json'
     $existingMf      = if (!$overwriteData -and (Test-Path $manifestPath)) { try { Get-Content $manifestPath -Raw | ConvertFrom-Json } catch { $null } } else { $null }
-    $mfHs            = if ($existingMf -and $existingMf.HistorySize) { $existingMf.HistorySize } else { 10 }
-    $mfHistory       = if ($existingMf -and $existingMf.History)     { $existingMf.History }     else { @() }
+    $mfHs            = if ($existingMf -and $existingMf.HistorySize)     { $existingMf.HistorySize }     else { 10 }
+    $mfHistory       = if ($existingMf -and $existingMf.History)         { $existingMf.History }         else { @() }
+    $mfRi            = if ($existingMf -and $existingMf.RecalcInterval -ne $null) { $existingMf.RecalcInterval } else { 7 }
     $existingJpgs    = @(Get-ChildItem $wallpapersDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installDir.Length + 1) })
-    [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
+    [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; RecalcInterval = $mfRi; LastRecalc = ''; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     $updatePath = Join-Path $logsDir 'UpdateInfo.json'
     if ($overwriteData -or !(Test-Path $updatePath)) {
         [PSCustomObject]@{ LatestVersion = ''; CheckedAt = '' } | ConvertTo-Json | Set-Content $updatePath -Encoding UTF8

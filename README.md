@@ -66,6 +66,7 @@ Settings
 │       ├── [2] Change interval  (15 min / 30 min / 1 h / custom, min 5 min)
 │       ├── [3] Change history   (5 / 10 / 25 / 50 / custom, 1-100)
 │       ├── [4] Recalculate wallpaper list
+│       ├── [5] Auto-recalculate interval  (1 day / 7 days / 30 days / custom / off)
 │       └── [B]   Back
 ├── [W] Run now
 ├── [C] Recalculate stats
@@ -88,6 +89,8 @@ Shuffle rotates through your saved Bing wallpapers at a set interval rather than
 **History size** — how many recent wallpapers are excluded from the next pick (default 10). If you have 50 saved wallpapers and history is set to 10, the next pick is drawn from the other 40. Change via **[S] → [3]**.
 
 **Recalculate** — rescans your Wallpapers folder and rebuilds the index. Use this if you have added or removed images manually. Available via **[S] → [4]**.
+
+**Auto-recalculate** — runs a recalculate automatically on a schedule (default every 7 days) so the index stays in sync without manual intervention. Configure via **[S] → [5]**, or set to Off to disable.
 
 Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day.
 
