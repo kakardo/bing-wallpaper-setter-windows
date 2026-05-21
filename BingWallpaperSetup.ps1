@@ -296,23 +296,27 @@ try {
             if ($mf -and $mf.RecalcInterval -and $mf.RecalcInterval -gt 0) {
                 $lastRecalc = if ($mf.LastRecalc) { try { [datetime]::ParseExact($mf.LastRecalc, 'yyyy-MM-dd', $null) } catch { [datetime]::MinValue } } else { [datetime]::MinValue }
                 if (((Get-Date) - $lastRecalc).TotalDays -ge $mf.RecalcInterval) {
-                    $rjpgs = @(Get-ChildItem (Join-Path $installRoot 'Wallpapers') -Recurse -Filter '*.jpg' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installRoot.Length + 1) })
+                    $rjpgs = @(Get-ChildItem (Join-Path $installRoot 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installRoot.Length + 1) })
                     $mf.Count = $rjpgs.Count; $mf.Wallpapers = $rjpgs; $mf.LastRecalc = (Get-Date).ToString('yyyy-MM-dd')
                     $mf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
                     Write-Log "Auto-recalculate | $($rjpgs.Count) wallpaper(s) indexed"
                 }
             }
-            if ($mf -and $mf.Count -gt 0) {
-                $history = @(if ($mf.History) { $mf.History } else { @() })
-                $maxHist = [math]::Max(0, [math]::Min($mf.HistorySize, $mf.Count - 1))
-                $history = @($history | Select-Object -First $maxHist)
-                $available = @(0..($mf.Count - 1) | Where-Object { $_ -notin $history })
-                $idx = if ($available.Count -gt 0) { $available | Get-Random } else { Get-Random -Maximum $mf.Count }
-                $shuffleFile = [System.IO.Path]::Combine($installRoot, $mf.Wallpapers[$idx])
+            $allJpgs = @(Get-ChildItem (Join-Path $installRoot 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | Select-Object -ExpandProperty FullName)
+            if ($allJpgs.Count -gt 0) {
+                $histSize = if ($mf -and $mf.HistorySize) { $mf.HistorySize } else { 10 }
+                $history  = @(if ($mf -and $mf.History) { $mf.History } else { @() })
+                $history  = @($history | Where-Object { $_ -lt $allJpgs.Count })
+                $maxHist  = [math]::Max(0, [math]::Min($histSize, $allJpgs.Count - 1))
+                $history  = @($history | Select-Object -First $maxHist)
+                $available = @(0..($allJpgs.Count - 1) | Where-Object { $_ -notin $history })
+                $idx = if ($available.Count -gt 0) { $available | Get-Random } else { Get-Random -Maximum $allJpgs.Count }
+                $shuffleFile = $allJpgs[$idx]
                 if (Test-Path $shuffleFile) {
                     [WallpaperHelper]::SetOnAllMonitors($shuffleFile) | Out-Null
-                    Write-Log "Shuffle | $($idx + 1)/$($mf.Count) | `"$(Split-Path $shuffleFile -Leaf)`""
-                    $mf.History = @(@($idx) + $history | Select-Object -First $mf.HistorySize)
+                    Write-Log "Shuffle | $($idx + 1)/$($allJpgs.Count) | `"$(Split-Path $shuffleFile -Leaf)`""
+                    if (-not $mf) { $mf = [PSCustomObject]@{ HistorySize = 10; History = @(); RecalcInterval = 7; LastRecalc = '' } }
+                    $mf.History = @(@($idx) + $history | Select-Object -First $histSize)
                     $mf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
                     try {
                         $sStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
@@ -888,7 +892,7 @@ function Try-ScheduledTask {
 
 function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
-    $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Filter '*.jpg' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
+    $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
     $count  = $jpgs.Count
     $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; TimesShuffled = 0; Version = '' } }
     $stats.WallpaperCount = $count
@@ -1214,7 +1218,7 @@ try {
     $mfHs            = if ($existingMf -and $existingMf.HistorySize)     { $existingMf.HistorySize }     else { 10 }
     $mfHistory       = if ($existingMf -and $existingMf.History)         { $existingMf.History }         else { @() }
     $mfRi            = if ($existingMf -and $existingMf.RecalcInterval -ne $null) { $existingMf.RecalcInterval } else { 7 }
-    $existingJpgs    = @(Get-ChildItem $wallpapersDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installDir.Length + 1) })
+    $existingJpgs    = @(Get-ChildItem $wallpapersDir -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installDir.Length + 1) })
     [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; RecalcInterval = $mfRi; LastRecalc = ''; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     $updatePath = Join-Path $logsDir 'UpdateInfo.json'
     if ($overwriteData -or !(Test-Path $updatePath)) {

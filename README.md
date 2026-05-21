@@ -27,7 +27,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 
 - Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
 - Updates the wallpaper on all connected monitors.
-- Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`.
+- Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`. You can also add your own images here — shuffle will pick them up automatically.
 - Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
 - Optional lock screen wallpaper update (primary monitor only).
 - Retries automatically if the network is unavailable at startup.
@@ -92,7 +92,7 @@ Shuffle rotates through your saved Bing wallpapers at a set interval rather than
 
 **Auto-recalculate** — runs a recalculate automatically on a schedule (default every 7 days) so the index stays in sync without manual intervention. Configure via **[S] → [5]**, or set to Off to disable.
 
-Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day.
+Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day. You can also drop your own images (`.jpg`, `.jpeg`, `.png`, `.bmp`) into the `Wallpapers` folder and they will be included automatically.
 
 ## Parameters
 
