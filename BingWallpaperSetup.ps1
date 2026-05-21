@@ -239,14 +239,14 @@ try {
             Write-Log "Wallpaper set | Monitors: $set | `"$title`""
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
             try {
-                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' }; TimesShuffled = 0; Version = '' } }
+                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
                 $now   = Get-Date
                 $today = $now.ToString('yyyy-MM-dd')
                 $stats.TimesRun++
                 if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
                 $stats.LastRun      = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
                 $stats.WallpaperCount++
-                $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss') }
+                $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss'); Path = $file }
                 $stats.Version      = $scriptVersion
                 $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
             } catch {}
@@ -266,7 +266,7 @@ try {
         if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
         Write-Host "Wallpaper is already up to date."
         try {
-            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = '' }; TimesShuffled = 0; Version = '' } }
+            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
             $now   = Get-Date
             $today = $now.ToString('yyyy-MM-dd')
             $stats.TimesRun++
@@ -599,12 +599,13 @@ function Toggle-LockScreen {
         Write-Host "  Lock screen $state." -ForegroundColor Green
         if ($newLock) {
             try {
-                $latest = Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                if ($latest) {
+                $lsStats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+                $lsFile   = if ($lsStats -and $lsStats.LastDownloaded -and $lsStats.LastDownloaded.Path) { $lsStats.LastDownloaded.Path } else { $null }
+                if ($lsFile -and (Test-Path $lsFile)) {
                     $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
                     if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
-                    Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $latest.FullName
-                    Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $latest.FullName
+                    Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $lsFile
+                    Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $lsFile
                     Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
                     Write-Host "  Lock screen updated to current wallpaper." -ForegroundColor Green
                 }
@@ -909,7 +910,7 @@ function Invoke-Recalculate {
     Write-Host '  Recalculating...' -ForegroundColor DarkGray
     $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
     $count  = $jpgs.Count
-    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; TimesShuffled = 0; Version = '' } }
+    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
     $stats.WallpaperCount = $count
     $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
     $existing = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
@@ -1204,7 +1205,7 @@ try {
     if (!(Test-Path $wallpapersDir)) { New-Item -ItemType Directory -Path $wallpapersDir -Force -ErrorAction Stop | Out-Null }
     $statsPath = Join-Path $logsDir 'Stats.json'
     if ($overwriteData -or !(Test-Path $statsPath)) {
-        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; TimesShuffled = 0; Version = $installerVersion } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
+        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = $installerVersion } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
     } else {
         $existing = Get-Content $statsPath -Raw | ConvertFrom-Json
         if ($null -eq $existing.TimesRun)      { $existing | Add-Member -NotePropertyName TimesRun      -NotePropertyValue 0                                                      -Force }
@@ -1224,6 +1225,7 @@ try {
             if ($null -eq $existing.LastDownloaded.Title) { $existing.LastDownloaded | Add-Member -NotePropertyName Title -NotePropertyValue '' -Force }
             if ($null -eq $existing.LastDownloaded.Date)  { $existing.LastDownloaded | Add-Member -NotePropertyName Date  -NotePropertyValue '' -Force }
             if ($null -eq $existing.LastDownloaded.Time)  { $existing.LastDownloaded | Add-Member -NotePropertyName Time  -NotePropertyValue '' -Force }
+            if ($null -eq $existing.LastDownloaded.Path)  { $existing.LastDownloaded | Add-Member -NotePropertyName Path  -NotePropertyValue '' -Force }
         }
         $existing.Version = $installerVersion
         $existing | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
