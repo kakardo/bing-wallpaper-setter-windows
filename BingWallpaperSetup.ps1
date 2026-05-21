@@ -297,8 +297,8 @@ try {
                 $history = @(if ($mf.History) { $mf.History } else { @() })
                 $maxHist = [math]::Max(0, [math]::Min($mf.HistorySize, $mf.Count - 1))
                 $history = @($history | Select-Object -First $maxHist)
-                $attempts = 0
-                do { $idx = Get-Random -Maximum $mf.Count; $attempts++ } while ($idx -in $history -and $attempts -lt 100)
+                $available = @(0..($mf.Count - 1) | Where-Object { $_ -notin $history })
+                $idx = if ($available.Count -gt 0) { $available | Get-Random } else { Get-Random -Maximum $mf.Count }
                 $shuffleFile = [System.IO.Path]::Combine($installRoot, $mf.Wallpapers[$idx])
                 if (Test-Path $shuffleFile) {
                     [WallpaperHelper]::SetOnAllMonitors($shuffleFile) | Out-Null
