@@ -597,6 +597,21 @@ function Toggle-LockScreen {
     if (Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
         $state = if ($newLock) { 'enabled' } else { 'disabled' }
         Write-Host "  Lock screen $state." -ForegroundColor Green
+        if ($newLock) {
+            try {
+                $latest = Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($latest) {
+                    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+                    if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+                    Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $latest.FullName
+                    Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $latest.FullName
+                    Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
+                    Write-Host "  Lock screen updated to current wallpaper." -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "  Warning: could not update lock screen: $_" -ForegroundColor Yellow
+            }
+        }
     }
     Start-Sleep 1
 }
