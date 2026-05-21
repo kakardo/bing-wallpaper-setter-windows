@@ -1124,6 +1124,23 @@ try {
         [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = '' }; Version = $installerVersion } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
     } else {
         $existing = Get-Content $statsPath -Raw | ConvertFrom-Json
+        if ($null -eq $existing.TimesRun)      { $existing | Add-Member -NotePropertyName TimesRun      -NotePropertyValue 0                                                      -Force }
+        if ($null -eq $existing.WallpapersSet) { $existing | Add-Member -NotePropertyName WallpapersSet -NotePropertyValue 0                                                      -Force }
+        if (-not $existing.FirstRun)           { $existing | Add-Member -NotePropertyName FirstRun      -NotePropertyValue (Get-Date).ToString('yyyy-MM-dd')                      -Force }
+        if (-not $existing.PSObject.Properties['LastRun'] -or -not $existing.LastRun) {
+            $existing | Add-Member -NotePropertyName LastRun -NotePropertyValue ([PSCustomObject]@{ Date = ''; Time = '' }) -Force
+        } else {
+            if ($null -eq $existing.LastRun.Date) { $existing.LastRun | Add-Member -NotePropertyName Date -NotePropertyValue '' -Force }
+            if ($null -eq $existing.LastRun.Time) { $existing.LastRun | Add-Member -NotePropertyName Time -NotePropertyValue '' -Force }
+        }
+        if ($null -eq $existing.WallpaperCount) { $existing | Add-Member -NotePropertyName WallpaperCount -NotePropertyValue 0 -Force }
+        if (-not $existing.PSObject.Properties['LastDownloaded'] -or -not $existing.LastDownloaded) {
+            $existing | Add-Member -NotePropertyName LastDownloaded -NotePropertyValue ([PSCustomObject]@{ Title = ''; Date = ''; Time = '' }) -Force
+        } else {
+            if ($null -eq $existing.LastDownloaded.Title) { $existing.LastDownloaded | Add-Member -NotePropertyName Title -NotePropertyValue '' -Force }
+            if ($null -eq $existing.LastDownloaded.Date)  { $existing.LastDownloaded | Add-Member -NotePropertyName Date  -NotePropertyValue '' -Force }
+            if ($null -eq $existing.LastDownloaded.Time)  { $existing.LastDownloaded | Add-Member -NotePropertyName Time  -NotePropertyValue '' -Force }
+        }
         $existing.Version = $installerVersion
         $existing | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
     }
@@ -1133,6 +1150,15 @@ try {
     $mfHistory       = if ($existingMf -and $existingMf.History)     { $existingMf.History }     else { @() }
     $existingJpgs    = @(Get-ChildItem $wallpapersDir -Recurse -Filter '*.jpg' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installDir.Length + 1) })
     [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
+    $updatePath = Join-Path $logsDir 'UpdateInfo.json'
+    if ($overwriteData -or !(Test-Path $updatePath)) {
+        [PSCustomObject]@{ LatestVersion = ''; CheckedAt = '' } | ConvertTo-Json | Set-Content $updatePath -Encoding UTF8
+    } else {
+        $existingUpd = Get-Content $updatePath -Raw | ConvertFrom-Json
+        if ($null -eq $existingUpd.LatestVersion) { $existingUpd | Add-Member -NotePropertyName LatestVersion -NotePropertyValue '' -Force }
+        if ($null -eq $existingUpd.CheckedAt)     { $existingUpd | Add-Member -NotePropertyName CheckedAt     -NotePropertyValue '' -Force }
+        $existingUpd | ConvertTo-Json | Set-Content $updatePath -Encoding UTF8
+    }
     if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
     $s1Ps.Stop(); $s1Ps.Dispose(); $s1Rs.Close(); $s1Rs.Dispose()
