@@ -598,10 +598,27 @@ function Toggle-LockScreen {
         $state = if ($newLock) { 'enabled' } else { 'disabled' }
         Write-Host "  Lock screen $state." -ForegroundColor Green
         if ($newLock) {
+            # Check for a new wallpaper first so the lock screen is as up to date as possible.
+            Write-Host '  Checking for new wallpaper...' -ForegroundColor DarkGray
             try {
-                $lsStats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
-                $lsFile   = if ($lsStats -and $lsStats.LastDownloaded -and $lsStats.LastDownloaded.Path) { $lsStats.LastDownloaded.Path } else { $null }
-                if ($lsFile -and (Test-Path $lsFile)) {
+                $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $($cfg.Market) -SetLockScreen"
+                if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
+                if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
+                Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+            } catch {}
+            # Now set the lock screen to whatever is on the desktop.
+            # If a new image was just downloaded the script already set it; this covers the "already up to date" case.
+            try {
+                $desktopWp = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name Wallpaper -EA SilentlyContinue).Wallpaper
+                $lsStats   = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+                $lsFile    = if ($desktopWp -and (Test-Path $desktopWp)) {
+                    $desktopWp
+                } elseif ($lsStats -and $lsStats.LastDownloaded -and $lsStats.LastDownloaded.Path -and (Test-Path $lsStats.LastDownloaded.Path)) {
+                    $lsStats.LastDownloaded.Path
+                } else {
+                    $null
+                }
+                if ($lsFile) {
                     $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
                     if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
                     Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $lsFile
