@@ -407,6 +407,32 @@ $noValues       = @('no','n','0','nej','ne','nee')
 $script:cachedConfig    = $null
 $script:updateAvailable = $null
 
+function Invoke-WithSpinner {
+    param(
+        [Parameter(Mandatory)] [scriptblock] $Action,
+        [string] $Label = 'Loading'
+    )
+    $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
+    $ps = [powershell]::Create(); $ps.Runspace = $rs
+    $ps.AddScript({
+        param($lbl)
+        $chars = @('|','/','-','\'); $i = 0
+        while ($true) {
+            [console]::Write("`r  $lbl $($chars[$i++ % 4])")
+            Start-Sleep -Milliseconds 120
+        }
+    }).AddArgument($Label) | Out-Null
+    $ps.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
+    try {
+        $result = & $Action
+    } finally {
+        $ps.Stop(); $ps.Dispose(); $rs.Close(); $rs.Dispose()
+        [console]::Write("`r" + (' ' * ($Label.Length + 12)) + "`r")
+    }
+    return $result
+}
+
 function Get-UpdateInfo {
     if ($null -ne $script:updateAvailable) { return }
     try {
@@ -594,18 +620,22 @@ function Toggle-LockScreen {
         Start-Sleep 3; return
     }
     $newLock = -not $cfg.LockScreen
-    if (Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+    $ok = Invoke-WithSpinner -Label 'Updating lock screen' -Action {
+        Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
+    }
+    if ($ok) {
         $state = if ($newLock) { 'enabled' } else { 'disabled' }
         Write-Host "  Lock screen $state." -ForegroundColor Green
         if ($newLock) {
             # Check for a new wallpaper first so the lock screen is as up to date as possible.
-            Write-Host '  Checking for new wallpaper...' -ForegroundColor DarkGray
-            try {
-                $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $($cfg.Market) -SetLockScreen"
-                if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
-                if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
-                Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
-            } catch {}
+            Invoke-WithSpinner -Label 'Checking for new wallpaper' -Action {
+                try {
+                    $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $($cfg.Market) -SetLockScreen"
+                    if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
+                    if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
+                    Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+                } catch {}
+            }
             # Now set the lock screen to whatever is on the desktop.
             # If a new image was just downloaded the script already set it; this covers the "already up to date" case.
             try {
@@ -668,22 +698,27 @@ function Show-MarketMenu {
             if ($entry -notmatch '^[a-zA-Z]{2}-[a-zA-Z]{2}$') {
                 Write-Host '  Invalid format. Use xx-XX (e.g. en-GB).' -ForegroundColor Red; Start-Sleep 2; continue
             }
-            Write-Host '  Validating with Bing...' -ForegroundColor DarkGray
-            try {
-                $test = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$entry" -ErrorAction Stop
-                if ($test.images -and $test.images.Count -gt 0) { $newMarket = $entry }
-                else { Write-Host '  Market not recognised by Bing.' -ForegroundColor Red; Start-Sleep 2; continue }
-            } catch {
-                Write-Host '  Could not validate - check your connection.' -ForegroundColor Red; Start-Sleep 2; continue
+            $validation = Invoke-WithSpinner -Label 'Validating with Bing' -Action {
+                try {
+                    $test = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$entry" -ErrorAction Stop
+                    if ($test.images -and $test.images.Count -gt 0) { return @{ Ok = $true } }
+                    return @{ Ok = $false; Reason = 'unknown' }
+                } catch {
+                    return @{ Ok = $false; Reason = 'connection' }
+                }
             }
+            if ($validation.Ok) { $newMarket = $entry }
+            elseif ($validation.Reason -eq 'unknown')    { Write-Host '  Market not recognised by Bing.' -ForegroundColor Red; Start-Sleep 2; continue }
+            else                                         { Write-Host '  Could not validate - check your connection.' -ForegroundColor Red; Start-Sleep 2; continue }
         } elseif ($choice -match '^\d+$') {
             $idx = [int]$choice - 1
             if ($idx -ge 0 -and $idx -lt $markets.Count) { $newMarket = $markets[$idx].Code } else { continue }
         } else { continue }
         if ($newMarket) {
-            if (Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
-                Write-Host "  Market updated to $newMarket." -ForegroundColor Green
+            $ok = Invoke-WithSpinner -Label 'Updating market' -Action {
+                Update-Task $newMarket $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
             }
+            if ($ok) { Write-Host "  Market updated to $newMarket." -ForegroundColor Green }
             Start-Sleep 1; return
         }
     }
@@ -712,7 +747,10 @@ function Show-ResolutionMenu {
             '1' { '' }; '2' { '1920x1080' }; '3' { '3840x2160' }; '4' { '1366x768' }; default { $null }
         }
         if ($null -ne $newRes) {
-            if (Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+            $ok = Invoke-WithSpinner -Label 'Updating resolution' -Action {
+                Update-Task $cfg.Market $newRes $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
+            }
+            if ($ok) {
                 $display = if ($newRes) { $newRes } else { 'Auto-detect' }
                 Write-Host "  Resolution set to $display." -ForegroundColor Green
             }
@@ -722,7 +760,6 @@ function Show-ResolutionMenu {
 }
 
 function Run-Now {
-    Write-Host '  Running wallpaper update...' -ForegroundColor DarkGray
     $cfg    = Get-TaskConfig
     $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
     if ($cfg) {
@@ -732,7 +769,9 @@ function Run-Now {
         if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
         if ($cfg.Shuffle) { $psArgs += " -Shuffle -ShuffleInterval $($cfg.ShuffleInterval)" }
     }
-    Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+    Invoke-WithSpinner -Label 'Running wallpaper update' -Action {
+        Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+    }
     $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
     Write-Host ''
     if (Test-Path $logFile) {
@@ -815,9 +854,10 @@ function Show-LogCapMenu {
         $choice = (Read-Host '  Choice').Trim().ToUpper()
         if ($choice -eq 'B') { return }
         if ($choice -eq '1') {
-            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0' $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
-                Write-Host '  Log cap disabled.' -ForegroundColor Green
+            $ok = Invoke-WithSpinner -Label 'Updating log cap' -Action {
+                Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen '0' $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
             }
+            if ($ok) { Write-Host '  Log cap disabled.' -ForegroundColor Green }
             Start-Sleep 1; return
         }
         if ($choice -eq '2') {
@@ -844,9 +884,10 @@ function Show-LogCapMenu {
                     else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($newCap) {
-                    if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
-                        Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    $ok = Invoke-WithSpinner -Label 'Updating log cap' -Action {
+                        Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
                     }
+                    if ($ok) { Write-Host "  Log cap set to $newCap." -ForegroundColor Green }
                     Start-Sleep 1; return
                 }
             }
@@ -875,9 +916,10 @@ function Show-LogCapMenu {
                     else { Write-Host '  Invalid value.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($newCap) {
-                    if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
-                        Write-Host "  Log cap set to $newCap." -ForegroundColor Green
+                    $ok = Invoke-WithSpinner -Label 'Updating log cap' -Action {
+                        Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $newCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
                     }
+                    if ($ok) { Write-Host "  Log cap set to $newCap." -ForegroundColor Green }
                     Start-Sleep 1; return
                 }
             }
@@ -901,40 +943,48 @@ function Try-ScheduledTask {
     $cfg = Get-TaskConfig
     if (!$cfg) { Write-Host '  No configuration found.' -ForegroundColor Red; Start-Sleep 2; return }
     if ($cfg.Source -eq 'task') { Write-Host '  Already running as a scheduled task.' -ForegroundColor DarkGray; Start-Sleep 2; return }
-    Write-Host '  Attempting to register scheduled task...' -ForegroundColor DarkGray
-    try {
-        $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
-        $psArgs    = Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-        Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
-        $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
-        $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
-        $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
-        $triggers      = @($triggerLogon, $triggerHourly)
-        $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-        $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -EA Stop | Out-Null
-        Remove-Item $startupBatPath -EA SilentlyContinue
+    $regError = Invoke-WithSpinner -Label 'Registering scheduled task' -Action {
+        try {
+            $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
+            $psArgs    = Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
+            Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
+            $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
+            $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
+            $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 9999)
+            $triggers      = @($triggerLogon, $triggerHourly)
+            $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+            $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -EA Stop | Out-Null
+            Remove-Item $startupBatPath -EA SilentlyContinue
+            return $null
+        } catch {
+            return $_
+        }
+    }
+    if ($regError) {
+        Write-Host "  Failed: $regError" -ForegroundColor Red
+        Write-Host '  Startup folder entry kept.' -ForegroundColor DarkGray
+    } else {
         Write-Host '  Scheduled task registered. Startup folder entry removed.' -ForegroundColor Green
         Write-Host '  Lock screen control is now available.' -ForegroundColor Green
-    } catch {
-        Write-Host "  Failed: $_" -ForegroundColor Red
-        Write-Host '  Startup folder entry kept.' -ForegroundColor DarkGray
     }
     Start-Sleep 3
 }
 
 function Invoke-Recalculate {
-    Write-Host '  Recalculating...' -ForegroundColor DarkGray
-    $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
-    $count  = $jpgs.Count
-    $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
-    $stats.WallpaperCount = $count
-    $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
-    $existing = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
-    $hs = if ($existing -and $existing.HistorySize) { $existing.HistorySize } else { 10 }
-    $ri = if ($existing -and $existing.RecalcInterval -ne $null) { $existing.RecalcInterval } else { 7 }
-    [PSCustomObject]@{ Count = $count; HistorySize = $hs; History = @(); RecalcInterval = $ri; LastRecalc = (Get-Date).ToString('yyyy-MM-dd'); Wallpapers = $jpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
-    $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
+    $count = Invoke-WithSpinner -Label 'Recalculating' -Action {
+        $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
+        $c      = $jpgs.Count
+        $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
+        $stats.WallpaperCount = $c
+        $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
+        $existing = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+        $hs = if ($existing -and $existing.HistorySize) { $existing.HistorySize } else { 10 }
+        $ri = if ($existing -and $existing.RecalcInterval -ne $null) { $existing.RecalcInterval } else { 7 }
+        [PSCustomObject]@{ Count = $c; HistorySize = $hs; History = @(); RecalcInterval = $ri; LastRecalc = (Get-Date).ToString('yyyy-MM-dd'); Wallpapers = $jpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+        $script:cachedStats = Get-Content $statsFile -Raw | ConvertFrom-Json
+        return $c
+    }
     Write-Host "  Done. $count wallpaper(s) indexed." -ForegroundColor Green
     Start-Sleep 1
 }
@@ -970,9 +1020,10 @@ function Show-ShuffleMenu {
         if ($choice -eq 'B') { return }
         if ($choice -eq '1') {
             $newShuffle = -not $shuffleOn
-            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $newShuffle $si) {
-                Write-Host "  Shuffle $(if ($newShuffle) { 'enabled' } else { 'disabled' })." -ForegroundColor Green
+            $ok = Invoke-WithSpinner -Label 'Updating shuffle' -Action {
+                Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $newShuffle $si
             }
+            if ($ok) { Write-Host "  Shuffle $(if ($newShuffle) { 'enabled' } else { 'disabled' })." -ForegroundColor Green }
             Start-Sleep 1; return
         }
         if ($choice -eq '2') {
@@ -999,7 +1050,10 @@ function Show-ShuffleMenu {
                     else { Write-Host '  Minimum 5 minutes.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
                 if ($null -ne $newInterval) {
-                    if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $shuffleOn $newInterval) {
+                    $ok = Invoke-WithSpinner -Label 'Updating shuffle interval' -Action {
+                        Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $shuffleOn $newInterval
+                    }
+                    if ($ok) {
                         $d = if ($newInterval -lt 60) { "$newInterval min" } elseif ($newInterval -eq 60) { '1 hour' } else { "$([int]($newInterval / 60)) hours" }
                         Write-Host "  Shuffle interval set to $d." -ForegroundColor Green
                     }
@@ -1115,7 +1169,10 @@ function Show-CheckIntervalMenu {
             else { Write-Host '  Minimum 10 minutes.' -ForegroundColor Red; Start-Sleep 2; continue }
         }
         if ($null -ne $newInterval) {
-            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $newInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd) {
+            $ok = Invoke-WithSpinner -Label 'Updating check interval' -Action {
+                Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $newInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
+            }
+            if ($ok) {
                 $display = if ($newInterval -lt 60) { "$newInterval min" } elseif ($newInterval -eq 60) { '1 hour' } else { "$([int]($newInterval / 60)) hours" }
                 Write-Host "  Check interval set to $display." -ForegroundColor Green
             }
@@ -1159,7 +1216,10 @@ function Show-CheckHoursMenu {
             } else { Write-Host '  Invalid range. Start must be less than end.' -ForegroundColor Red; Start-Sleep 2; continue }
         }
         if ($null -ne $newStart) {
-            if (Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $newStart $newEnd) {
+            $ok = Invoke-WithSpinner -Label 'Updating check hours' -Action {
+                Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $newStart $newEnd
+            }
+            if ($ok) {
                 $display = if ($newStart -eq 0 -and $newEnd -eq 0) { 'All day' } else { "$($newStart.ToString('D2')):00 - $($newEnd.ToString('D2')):00" }
                 Write-Host "  Check hours set to $display." -ForegroundColor Green
             }
