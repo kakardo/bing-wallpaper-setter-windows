@@ -173,7 +173,7 @@ function Write-Log($msg) {
 function Invoke-HistoryCatchUp {
     param([int]$Days, [string]$Mkt, [string]$Res)
     $added = 0
-    for ($i = 1; $i -le [math]::Min($Days, 7); $i++) {
+    for ($i = 0; $i -le [math]::Min($Days, 7); $i++) {
         try {
             $hApi = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=$i&n=1&mkt=$Mkt" -ErrorAction Stop
             $hImg = $hApi.images[0]
@@ -1242,6 +1242,10 @@ function Show-HistoryMenu {
             Write-Host "  History catch-up $(if ($newEnabled) { 'enabled' } else { 'disabled' })." -ForegroundColor Green
             if ($newEnabled) {
                 Invoke-WithSpinner -Label 'Downloading history' -Action {
+                    $normalArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+                    if ($cfg) { $normalArgs += " -Market $($cfg.Market)" }
+                    if ($cfg -and $cfg.Resolution) { $normalArgs += " -Resolution $($cfg.Resolution)" }
+                    Start-Process powershell -ArgumentList $normalArgs -Wait -WindowStyle Hidden
                     $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -CatchUpOnly -CatchUpDays $cuDays"
                     if ($cfg) { $psArgs += " -Market $($cfg.Market)" }
                     if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
@@ -1282,6 +1286,10 @@ function Show-HistoryMenu {
                     Write-Host "  Days set to $newDays." -ForegroundColor Green
                     if ($cuEnabled) {
                         Invoke-WithSpinner -Label 'Downloading history' -Action {
+                            $normalArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+                            if ($cfg) { $normalArgs += " -Market $($cfg.Market)" }
+                            if ($cfg -and $cfg.Resolution) { $normalArgs += " -Resolution $($cfg.Resolution)" }
+                            Start-Process powershell -ArgumentList $normalArgs -Wait -WindowStyle Hidden
                             $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -CatchUpOnly -CatchUpDays $newDays"
                             if ($cfg) { $psArgs += " -Market $($cfg.Market)" }
                             if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
@@ -1295,6 +1303,10 @@ function Show-HistoryMenu {
         }
         if ($choice -eq '3') {
             Invoke-WithSpinner -Label 'Downloading history' -Action {
+                $normalArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+                if ($cfg) { $normalArgs += " -Market $($cfg.Market)" }
+                if ($cfg -and $cfg.Resolution) { $normalArgs += " -Resolution $($cfg.Resolution)" }
+                Start-Process powershell -ArgumentList $normalArgs -Wait -WindowStyle Hidden
                 $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -CatchUpOnly -CatchUpDays $cuDays"
                 if ($cfg) { $psArgs += " -Market $($cfg.Market)" }
                 if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
