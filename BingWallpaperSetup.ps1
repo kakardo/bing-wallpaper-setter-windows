@@ -1,6 +1,6 @@
 # @author      Kardo Rostam
 # @date        2026-04-28
-# @version     2.5.1
+# @version     2.6
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
 #
@@ -46,7 +46,7 @@ try {
     [void][W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
 } catch {}
 
-$installerVersion = '2.5.1'
+$installerVersion = '2.6'
 $pictures = [Environment]::GetFolderPath('MyPictures')
 if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROFILE 'Pictures' }
 if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
@@ -130,7 +130,7 @@ param(
     [switch]$Install
 )
 
-$scriptVersion = '2.5.1'
+$scriptVersion = '2.6'
 $logPrefix     = if ($Install) { '[INSTALL] ' } else { '' }
 
 if (!$Resolution) {
