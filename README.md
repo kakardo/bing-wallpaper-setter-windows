@@ -1,4 +1,4 @@
-# Bing Wallpaper Setter for Windows
+﻿# Bing Wallpaper Setter for Windows
 
 [![Download](https://img.shields.io/github/v/release/kakardo/bing-wallpaper-setter-windows?label=Download&style=for-the-badge)](https://github.com/kakardo/bing-wallpaper-setter-windows/releases/latest)
 
@@ -33,6 +33,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Retries automatically if the network is unavailable at startup.
 - Checks for new releases and shows a notice in the settings menu when one is available.
 - Optional shuffle mode — rotates randomly through your saved wallpapers on a configurable interval (default 15 min). A manifest file keeps track of recent picks so the same image is not repeated too soon.
+- History catch-up that automatically downloads the last 7 days of Bing wallpapers whenever a new image is added, so days missed while your PC was off are filled in. Configurable or can be turned off entirely via Settings.
 - `Settings.bat` for management and uninstall.
 
 > **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
@@ -68,6 +69,11 @@ Settings
 │       ├── [4] Recalculate wallpaper list
 │       ├── [5] Auto-recalculate interval  (1 day / 7 days / 30 days / custom / off)
 │       └── [B]   Back
+├── [H] History catch-up
+│       ├── [1] Toggle on/off
+│       ├── [2] Change days  (1 / 3 / 7 / custom, max 7)
+│       ├── [3] Run now
+│       └── [B]   Back
 ├── [W] Run now
 ├── [C] Recalculate stats
 ├── [V] View log        (last 10 entries)
@@ -93,6 +99,22 @@ Shuffle rotates through your saved Bing wallpapers at a set interval rather than
 **Auto-recalculate** — runs a recalculate automatically on a schedule (default every 7 days) so the index stays in sync without manual intervention. Configure via **[S] → [5]**, or set to Off to disable.
 
 Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day. You can also drop your own images (`.jpg`, `.jpeg`, `.png`, `.bmp`) into the `Wallpapers` folder and they will be included automatically.
+
+## History catch-up
+
+History catch-up automatically downloads recent Bing wallpapers that your PC missed, useful if you were away for a few days or just installed the program and want to fill in your library straight away.
+
+When today's wallpaper is downloaded, the program checks the previous days (up to the configured limit) and silently downloads any that are not already on disk. The images go straight into the shuffle library and do not change what is currently on your desktop.
+
+**To configure:** open `Settings.bat` and choose **[H] History catch-up**.
+
+**Toggle on/off**: enabled by default. Turn it off if you only want the current day's image. Available via **[H] → [1]**.
+
+**Days**: how many previous days to check on each run (default 7, maximum 7). Bing only keeps the last 7 days available via its API. Change via **[H] → [2]**. Changing the day count applies the new setting immediately.
+
+**Run now**: triggers a one-off catch-up without waiting for the next scheduled check. Available via **[H] → [3]**.
+
+Changing the day count or turning catch-up on both trigger an immediate download so your library is up to date straight away.
 
 ## Parameters
 

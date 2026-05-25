@@ -127,7 +127,9 @@ param(
     [int]$CheckWindowEnd = 0,
     [switch]$Shuffle,
     [int]$ShuffleInterval = 15,
-    [switch]$Install
+    [switch]$Install,
+    [switch]$CatchUpOnly,
+    [int]$CatchUpDays = 0
 )
 
 $scriptVersion = '2.6'
@@ -168,6 +170,42 @@ function Write-Log($msg) {
     }
 }
 
+function Invoke-HistoryCatchUp {
+    param([int]$Days, [string]$Mkt, [string]$Res)
+    $added = 0
+    for ($i = 1; $i -le [math]::Min($Days, 7); $i++) {
+        try {
+            $hApi = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=$i&n=1&mkt=$Mkt" -ErrorAction Stop
+            $hImg = $hApi.images[0]
+            if (!$hImg -or !$hImg.urlbase -or !$hImg.startdate) { continue }
+            $hYear  = $hImg.startdate.Substring(0, 4)
+            $hMonth = $hImg.startdate.Substring(4, 2)
+            $hDay   = $hImg.startdate.Substring(6, 2)
+            $hName  = if ($hImg.title) { $hImg.title -replace '[\\/:*?"<>|]', '_' } else { 'Bing' }
+            $hDate  = "$hYear-$hMonth-$hDay"
+            $hRes   = if ($Res) { $Res } else { '1920x1080' }
+            $hDir   = Join-Path $installRoot "Wallpapers\$hYear\$hMonth"
+            $hFile  = "$hDir\${hDate}_${hName}_${hRes}.jpg"
+            if (Test-Path $hFile) { continue }
+            if (!(Test-Path $hDir)) { New-Item -ItemType Directory -Path $hDir -Force | Out-Null }
+            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFile -ErrorAction Stop
+            if ((Get-Item $hFile).Length -eq 0) { Remove-Item $hFile; continue }
+            Write-Log "History: downloaded ${hDate}_${hName}_${hRes}.jpg"
+            $added++
+            try {
+                $hmf   = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                $hlist = @($hmf.Wallpapers)
+                $hrel  = $hFile.Substring($installRoot.Length + 1)
+                if ($hrel -notin $hlist) {
+                    $hlist += $hrel; $hmf.Wallpapers = $hlist; $hmf.Count = $hlist.Count
+                    $hmf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                }
+            } catch {}
+        } catch { Write-Log "History: error on idx=$i - $_" }
+    }
+    if ($added -gt 0) { Write-Log "History: $added wallpaper(s) added to library" }
+}
+
 # Exit early if outside check window or today's wallpaper is already set
 if (-not $Install) {
     try {
@@ -186,8 +224,14 @@ if (-not $Install) {
                 if ($currentFingerprint -ne $storedFingerprint) { $monitorsChanged = $true }
             }
         } catch {}
-        if ($todayDone -and -not $Shuffle -and -not $monitorsChanged) { exit }
+        if ($todayDone -and -not $Shuffle -and -not $monitorsChanged -and -not $CatchUpOnly) { exit }
     } catch {}
+}
+
+if ($CatchUpOnly) {
+    $days = if ($CatchUpDays -gt 0) { $CatchUpDays } else { 7 }
+    Invoke-HistoryCatchUp -Days $days -Mkt $Market -Res $Resolution
+    exit
 }
 
 $api = $null
@@ -270,6 +314,12 @@ try {
                     $mf.Count      = $list.Count
                     $mf | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
                 }
+            } catch {}
+            try {
+                $mfCu      = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { $null }
+                $cuEnabled = if ($mfCu -and $mfCu.PSObject.Properties['CatchUpEnabled']) { [bool]$mfCu.CatchUpEnabled } else { $true }
+                $cuDays    = if ($mfCu -and $mfCu.PSObject.Properties['CatchUpDays'] -and [int]$mfCu.CatchUpDays -gt 0) { [int]$mfCu.CatchUpDays } else { 7 }
+                if ($cuEnabled) { Invoke-HistoryCatchUp -Days $cuDays -Mkt $Market -Res $Resolution }
             } catch {}
         }
     } else {
@@ -581,8 +631,11 @@ function Show-Status {
     $mfCount        = if ($mfData) { $mfData.Count } else { 0 }
     $mfHs           = if ($mfData -and $mfData.HistorySize) { $mfData.HistorySize } else { 10 }
     $shuffleDisplay = if ($shuffleOn) { "On (every $siDisplay, history: $mfHs, $mfCount wallpapers)" } else { 'Off' }
+    $catchUpEnabled = if ($mfData -and $mfData.PSObject.Properties['CatchUpEnabled']) { [bool]$mfData.CatchUpEnabled } else { $true }
+    $catchUpDays    = if ($mfData -and $mfData.PSObject.Properties['CatchUpDays'] -and [int]$mfData.CatchUpDays -gt 0) { [int]$mfData.CatchUpDays } else { 7 }
+    $catchUpDisplay = if ($catchUpEnabled) { "On ($catchUpDays day(s))" } else { 'Off' }
     $labelWidth = 14  # "Downloaded  : ".Length
-    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved", $shuffleDisplay) | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
+    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved", $shuffleDisplay, $catchUpDisplay) | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
     $sep = [string][char]0x2500 * $sepWidth
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
@@ -597,6 +650,7 @@ function Show-Status {
     Write-Host "  Check every : $checkIntervalDisplay"
     Write-Host "  Check hours : $checkWindowDisplay"
     Write-Host "  Shuffle     : $shuffleDisplay"
+    Write-Host "  Catch-up    : $catchUpDisplay"
     Write-Host ''
     Write-Host '  -- Stats --' -ForegroundColor DarkGray
     Write-Host ''
@@ -622,9 +676,9 @@ function Show-Status {
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
     Write-Host '  [G] Log cap              [C] Recalculate stats' -ForegroundColor DarkGray
     Write-Host '  [I] Check interval       [O] Check hours' -ForegroundColor DarkGray
-    Write-Host '  [S] Shuffle              [V] View log' -ForegroundColor DarkGray
-    Write-Host '  [T] Switch to task       [U] Uninstall' -ForegroundColor DarkGray
-    Write-Host '  [X] Exit' -ForegroundColor DarkGray
+    Write-Host '  [S] Shuffle              [H] History catch-up' -ForegroundColor DarkGray
+    Write-Host '  [V] View log             [T] Switch to task' -ForegroundColor DarkGray
+    Write-Host '  [U] Uninstall            [X] Exit' -ForegroundColor DarkGray
     Write-Host ''
 }
 
@@ -1158,6 +1212,105 @@ function Show-ShuffleMenu {
     }
 }
 
+function Show-HistoryMenu {
+    while ($true) {
+        $cfg = Get-TaskConfig
+        $mf  = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+        $cuEnabled = if ($mf -and $mf.PSObject.Properties['CatchUpEnabled']) { [bool]$mf.CatchUpEnabled } else { $true }
+        $cuDays    = if ($mf -and $mf.PSObject.Properties['CatchUpDays'] -and [int]$mf.CatchUpDays -gt 0) { [int]$mf.CatchUpDays } else { 7 }
+        Clear-Host
+        Write-Host ''
+        Write-Host '  History catch-up' -ForegroundColor Cyan
+        Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+        Write-Host "  Status : $(if ($cuEnabled) { 'On' } else { 'Off' })"
+        Write-Host "  Days   : $cuDays"
+        Write-Host ''
+        Write-Host "  [1] Toggle $(if ($cuEnabled) { 'off' } else { 'on' })"
+        Write-Host '  [2] Change days'
+        Write-Host '  [3] Run now'
+        Write-Host ''
+        Write-Host '  [B] Back' -ForegroundColor DarkGray
+        Write-Host ''
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        if ($choice -eq 'B') { return }
+        if ($choice -eq '1') {
+            $newEnabled = -not $cuEnabled
+            $mfEdit = if ($mf) { $mf } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+            if (-not $mfEdit.PSObject.Properties['CatchUpEnabled']) { $mfEdit | Add-Member -NotePropertyName CatchUpEnabled -NotePropertyValue $newEnabled -Force } else { $mfEdit.CatchUpEnabled = $newEnabled }
+            if (-not $mfEdit.PSObject.Properties['CatchUpDays'])    { $mfEdit | Add-Member -NotePropertyName CatchUpDays    -NotePropertyValue $cuDays     -Force }
+            $mfEdit | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+            Write-Host "  History catch-up $(if ($newEnabled) { 'enabled' } else { 'disabled' })." -ForegroundColor Green
+            if ($newEnabled) {
+                Invoke-WithSpinner -Label 'Downloading history' -Action {
+                    $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -CatchUpOnly -CatchUpDays $cuDays"
+                    if ($cfg) { $psArgs += " -Market $($cfg.Market)" }
+                    if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
+                    Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+                } | Out-Null
+                $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+            }
+            Start-Sleep 1; return
+        }
+        if ($choice -eq '2') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  History catch-up - Days' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $cuDays"
+                Write-Host ''
+                Write-Host '  [1] 1 day'
+                Write-Host '  [2] 3 days'
+                Write-Host '  [3] 7 days (max)'
+                Write-Host '  [C] Custom (1-7)'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newDays = switch ($sub) { '1' { 1 }; '2' { 3 }; '3' { 7 }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter number of days (1-7)').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -ge 1 -and [int]$entry -le 7) { $newDays = [int]$entry }
+                    else { Write-Host '  Enter a number between 1 and 7.' -ForegroundColor Red; Start-Sleep 2; continue }
+                }
+                if ($null -ne $newDays) {
+                    $mfEdit = if ($mf) { $mf } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                    if (-not $mfEdit.PSObject.Properties['CatchUpDays'])    { $mfEdit | Add-Member -NotePropertyName CatchUpDays    -NotePropertyValue $newDays    -Force } else { $mfEdit.CatchUpDays    = $newDays    }
+                    if (-not $mfEdit.PSObject.Properties['CatchUpEnabled']) { $mfEdit | Add-Member -NotePropertyName CatchUpEnabled -NotePropertyValue $cuEnabled   -Force }
+                    $mfEdit | ConvertTo-Json -Depth 3 | Set-Content $manifestFile -Encoding UTF8
+                    Write-Host "  Days set to $newDays." -ForegroundColor Green
+                    if ($cuEnabled) {
+                        Invoke-WithSpinner -Label 'Downloading history' -Action {
+                            $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -CatchUpOnly -CatchUpDays $newDays"
+                            if ($cfg) { $psArgs += " -Market $($cfg.Market)" }
+                            if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
+                            Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+                        } | Out-Null
+                        $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+                    }
+                    Start-Sleep 1; return
+                }
+            }
+        }
+        if ($choice -eq '3') {
+            Invoke-WithSpinner -Label 'Downloading history' -Action {
+                $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -CatchUpOnly -CatchUpDays $cuDays"
+                if ($cfg) { $psArgs += " -Market $($cfg.Market)" }
+                if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
+                Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+            } | Out-Null
+            $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+            Write-Host ''
+            if (Test-Path $logFile) {
+                Get-Content $logFile | Select-Object -Last 3 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+            }
+            Write-Host ''
+            Start-Sleep 2
+        }
+    }
+}
+
 function Show-CheckIntervalMenu {
     while ($true) {
         $cfg     = Get-TaskConfig
@@ -1267,6 +1420,7 @@ while ($true) {
         'I' { Show-CheckIntervalMenu }
         'O' { Show-CheckHoursMenu }
         'S' { Show-ShuffleMenu }
+        'H' { Show-HistoryMenu }
         'V' { Show-Log }
         'T' { Try-ScheduledTask }
         'U' { Invoke-Uninstall }
@@ -1330,8 +1484,10 @@ try {
     $mfHs            = if ($existingMf -and $existingMf.HistorySize)     { $existingMf.HistorySize }     else { 10 }
     $mfHistory       = if ($existingMf -and $existingMf.History)         { $existingMf.History }         else { @() }
     $mfRi            = if ($existingMf -and $existingMf.RecalcInterval -ne $null) { $existingMf.RecalcInterval } else { 7 }
+    $mfCuEnabled     = if ($existingMf -and $existingMf.PSObject.Properties['CatchUpEnabled']) { [bool]$existingMf.CatchUpEnabled } else { $true }
+    $mfCuDays        = if ($existingMf -and $existingMf.PSObject.Properties['CatchUpDays'] -and [int]$existingMf.CatchUpDays -gt 0) { [int]$existingMf.CatchUpDays } else { 7 }
     $existingJpgs    = @(Get-ChildItem $wallpapersDir -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($installDir.Length + 1) })
-    [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; RecalcInterval = $mfRi; LastRecalc = ''; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
+    [PSCustomObject]@{ Count = $existingJpgs.Count; HistorySize = $mfHs; History = $mfHistory; RecalcInterval = $mfRi; LastRecalc = ''; CatchUpEnabled = $mfCuEnabled; CatchUpDays = $mfCuDays; Wallpapers = $existingJpgs } | ConvertTo-Json -Depth 3 | Set-Content $manifestPath -Encoding UTF8
     $updatePath = Join-Path $logsDir 'UpdateInfo.json'
     if ($overwriteData -or !(Test-Path $updatePath)) {
         [PSCustomObject]@{ LatestVersion = ''; CheckedAt = '' } | ConvertTo-Json | Set-Content $updatePath -Encoding UTF8
