@@ -177,7 +177,16 @@ if (-not $Install) {
         }
         $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
-        if ($todayDone -and -not $Shuffle) { exit }
+        $monitorsChanged = $false
+        $currentFingerprint = ''
+        try {
+            $currentFingerprint = ([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X } | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)+$($_.Bounds.X)+$($_.Bounds.Y)" }) -join '|'
+            if ($todayDone) {
+                $storedFingerprint = if ($earlyStats.PSObject.Properties['MonitorFingerprint']) { $earlyStats.MonitorFingerprint } else { '' }
+                if ($currentFingerprint -ne $storedFingerprint) { $monitorsChanged = $true }
+            }
+        } catch {}
+        if ($todayDone -and -not $Shuffle -and -not $monitorsChanged) { exit }
     } catch {}
 }
 
@@ -239,7 +248,7 @@ try {
             Write-Log "Wallpaper set | Monitors: $set | `"$title`""
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
             try {
-                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
+                $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
                 $now   = Get-Date
                 $today = $now.ToString('yyyy-MM-dd')
                 $stats.TimesRun++
@@ -247,7 +256,8 @@ try {
                 $stats.LastRun      = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
                 $stats.WallpaperCount++
                 $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss'); Path = $file }
-                $stats.Version      = $scriptVersion
+                $stats.Version          = $scriptVersion
+                $stats.MonitorFingerprint = $currentFingerprint
                 $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
             } catch {}
             try {
@@ -263,16 +273,23 @@ try {
             } catch {}
         }
     } else {
-        if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
-        Write-Host "Wallpaper is already up to date."
+        if ($monitorsChanged) {
+            [WallpaperHelper]::SetOnAllMonitors($file) | Out-Null
+            Write-Log 'Monitor layout changed | Wallpaper re-applied'
+            Write-Host "Monitor layout changed. Wallpaper re-applied."
+        } else {
+            if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
+            Write-Host "Wallpaper is already up to date."
+        }
         try {
-            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
+            $stats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
             $now   = Get-Date
             $today = $now.ToString('yyyy-MM-dd')
             $stats.TimesRun++
             if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
             $stats.LastRun  = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
             $stats.Version  = $scriptVersion
+            if ($monitorsChanged) { $stats.MonitorFingerprint = $currentFingerprint }
             $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
         } catch {}
     }
@@ -975,7 +992,7 @@ function Invoke-Recalculate {
     $count = Invoke-WithSpinner -Label 'Recalculating' -Action {
         $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
         $c      = $jpgs.Count
-        $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = '' } }
+        $stats  = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
         $stats.WallpaperCount = $c
         $stats | ConvertTo-Json -Depth 3 | Set-Content $statsFile -Encoding UTF8
         $existing = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
@@ -1282,7 +1299,7 @@ try {
     if (!(Test-Path $wallpapersDir)) { New-Item -ItemType Directory -Path $wallpapersDir -Force -ErrorAction Stop | Out-Null }
     $statsPath = Join-Path $logsDir 'Stats.json'
     if ($overwriteData -or !(Test-Path $statsPath)) {
-        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = $installerVersion } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
+        [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = $installerVersion; MonitorFingerprint = '' } | ConvertTo-Json -Depth 3 | Set-Content $statsPath -Encoding UTF8
     } else {
         $existing = Get-Content $statsPath -Raw | ConvertFrom-Json
         if ($null -eq $existing.TimesRun)      { $existing | Add-Member -NotePropertyName TimesRun      -NotePropertyValue 0                                                      -Force }
@@ -1295,7 +1312,8 @@ try {
             if ($null -eq $existing.LastRun.Time) { $existing.LastRun | Add-Member -NotePropertyName Time -NotePropertyValue '' -Force }
         }
         if ($null -eq $existing.WallpaperCount)   { $existing | Add-Member -NotePropertyName WallpaperCount  -NotePropertyValue 0 -Force }
-        if ($null -eq $existing.TimesShuffled)   { $existing | Add-Member -NotePropertyName TimesShuffled   -NotePropertyValue 0 -Force }
+        if ($null -eq $existing.TimesShuffled)    { $existing | Add-Member -NotePropertyName TimesShuffled      -NotePropertyValue 0  -Force }
+        if (-not $existing.PSObject.Properties['MonitorFingerprint']) { $existing | Add-Member -NotePropertyName MonitorFingerprint -NotePropertyValue '' -Force }
         if (-not $existing.PSObject.Properties['LastDownloaded'] -or -not $existing.LastDownloaded) {
             $existing | Add-Member -NotePropertyName LastDownloaded -NotePropertyValue ([PSCustomObject]@{ Title = ''; Date = ''; Time = '' }) -Force
         } else {

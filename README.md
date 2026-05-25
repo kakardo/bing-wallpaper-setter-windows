@@ -26,7 +26,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 ## Features
 
 - Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
-- Updates the wallpaper on all connected monitors.
+- Updates the wallpaper on all connected monitors. Detects monitor layout changes between checks and reapplies automatically, so switching docking stations does not leave new screens blank.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`. You can also add your own images here — shuffle will pick them up automatically.
 - Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
 - Optional lock screen wallpaper update (primary monitor only).
