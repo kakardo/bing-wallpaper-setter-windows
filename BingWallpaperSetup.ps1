@@ -1619,12 +1619,13 @@ try {
     $setLockScreenTimeout = 10
     if ($setLockScreen) {
         do {
-            Write-Host "  Lock screen display timeout when plugged in, in minutes [10]: " -NoNewline
+            Write-Host "  How long should the lock screen wallpaper stay visible before the screen turns off? (minutes, plugged in) [10]: " -NoNewline
             $raw = (Read-Host).Trim()
             if ($raw -eq '') { $setLockScreenTimeout = 10; break }
             elseif ($raw -match '^\d+$' -and [int]$raw -ge 1 -and [int]$raw -le 120) { $setLockScreenTimeout = [int]$raw; break }
             else { Write-Host '  Enter a number between 1 and 120, or press Enter for 10 minutes.' -ForegroundColor Red }
         } while ($true)
+        Write-Host "  On battery, Windows decides when to turn off the screen. You can adjust both in Settings > [L] Lock screen." -ForegroundColor DarkGray
     }
     Write-Host ""
 
