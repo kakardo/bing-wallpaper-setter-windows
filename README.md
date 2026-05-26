@@ -154,5 +154,7 @@ Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts
 
 ## Requirements
 
-- Windows 10 or 11
-- PowerShell 5
+- Windows 10, 11 or later (full support)
+- Windows 8 / 8.1 (partial: wallpaper works, lock screen feature not available)
+- Windows 7 (not officially supported: wallpaper may work via the startup folder fallback, but lock screen is unavailable and [PowerShell 3 must be installed manually](https://www.microsoft.com/en-us/download/details.aspx?id=34595))
+- PowerShell 3 or later
