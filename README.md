@@ -147,7 +147,6 @@ The default timeout is 10 minutes on AC. To let Windows manage it entirely, choo
 |-----------|---------|---------|
 | `-Market` | `en-US` | Any Bing market code, e.g. `en-GB`, `nb-NO` |
 | `-Resolution` | Auto-detect | `1920x1080`, `1366x768`, `3840x2160` |
-| `-SetLockScreen` | Off | Switch. Also updates the lock screen |
 
 Example:
 ```powershell
