@@ -6,7 +6,16 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
 
 ---
 
-[Installation](#installation) · [SmartScreen warning](#windows-smartscreen-warning) · [Features](#features) · [Status and management](#status-and-management) · [Shuffle mode](#shuffle-mode) · [History catch-up](#history-catch-up) · [Lock screen](#lock-screen) · [Parameters](#parameters) · [Uninstall](#uninstall) · [Requirements](#requirements)
+- [Installation](#installation)
+- [SmartScreen warning](#windows-smartscreen-warning)
+- [Features](#features)
+- [Status and management](#status-and-management)
+- [Shuffle mode](#shuffle-mode)
+- [History catch-up](#history-catch-up)
+- [Lock screen](#lock-screen)
+- [Parameters](#parameters)
+- [Uninstall](#uninstall)
+- [Requirements](#requirements)
 
 ---
 
