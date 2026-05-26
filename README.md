@@ -57,6 +57,8 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Internet connection (required to download wallpapers from Bing)
 - Administrator privileges (required during installation and for lock screen updates)
 
+---
+
 ## 2. Features
 
 ### 2a. Overview
@@ -115,6 +117,8 @@ When lock screen updates are enabled, the program sets the lock screen image to 
 The default timeout is 10 minutes on AC. To let Windows manage it entirely, choose **[D] Windows default** in the timeout menu.
 
 > **Multi-monitor note:** lock screen only updates on the primary monitor. Windows does not support per-monitor lock screens.
+
+---
 
 ## 3. Management
 
