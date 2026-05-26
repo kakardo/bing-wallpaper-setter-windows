@@ -29,14 +29,14 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Updates the wallpaper on all connected monitors. Detects monitor layout changes between checks and reapplies automatically, so switching docking stations does not leave new screens blank.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`. You can also add your own images here and shuffle will pick them up automatically.
 - Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
-- Optional lock screen wallpaper update (primary monitor only).
+- Optional lock screen wallpaper update (primary monitor only). Configurable display timeout for when the PC is plugged in; battery follows Windows default.
 - Retries automatically if the network is unavailable at startup.
 - Checks for new releases and shows a notice in the settings menu when one is available.
 - Optional shuffle mode that rotates randomly through your saved wallpapers on a configurable interval (default 15 min). A manifest file keeps track of recent picks so the same image is not repeated too soon.
 - History catch-up that automatically downloads the last 7 days of Bing wallpapers whenever a new image is added, so days missed while your PC was off are filled in. Configurable or can be turned off entirely via Settings.
 - `Settings.bat` for management and uninstall.
 
-> **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows doesn't support per-monitor lock screens).
+> **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows does not support per-monitor lock screens).
 
 ## Status and management
 
@@ -44,7 +44,14 @@ Open `Pictures\BingWallpaper\Settings.bat` to manage the wallpaper setter.
 
 ```
 Settings
-├── [L] Toggle lock screen
+├── [L] Lock screen
+│       ├── [1] Toggle on/off
+│       ├── [2] Set display timeout
+│       │       ├── [1-4] Preset durations (5 / 10 / 15 / 30 min)
+│       │       ├── [C]   Custom (1-120 min)
+│       │       ├── [D]   Windows default (do not manage)
+│       │       └── [B]   Back
+│       └── [B]   Back
 ├── [M] Change market
 │       ├── [1-8] Preset markets
 │       ├── [C]   Custom (validated against Bing)
@@ -116,6 +123,16 @@ When today's wallpaper is downloaded, the program checks the previous days (up t
 
 Changing the day count or turning catch-up on both trigger an immediate download so your library is up to date straight away.
 
+## Lock screen
+
+When lock screen updates are enabled, the program sets the lock screen image to the current wallpaper each time a new one is downloaded.
+
+**Display timeout:** you can configure how long Windows keeps the lock screen visible before turning off the display when your PC is plugged in. Battery follows Windows default and is never changed. The installer asks for this value when you enable lock screen, and you can update it any time via **[L] → [2] Set display timeout**.
+
+The default timeout is 10 minutes on AC. To let Windows manage it entirely, choose **[D] Windows default** in the timeout menu.
+
+> **Multi-monitor note:** lock screen only updates on the primary monitor. Windows does not support per-monitor lock screens.
+
 ## Parameters
 
 `BingWallpaperSetup.ps1` accepts optional parameters if you prefer to run the script directly:
@@ -138,5 +155,4 @@ Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts
 ## Requirements
 
 - Windows 10 or 11
-- PowerShell 5.1 or later (built-in on Windows 10/11)
-- An internet connection. If unavailable at logon, the script retries automatically for up to an hour.
+- PowerShell 5

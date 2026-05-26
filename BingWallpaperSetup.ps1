@@ -541,9 +541,10 @@ function Get-TaskConfig {
     $checkInterval    = if ($a -match '-CheckInterval\s+(\d+)')    { [int]$Matches[1] } else { 60 }
     $checkWindowStart = if ($a -match '-CheckWindowStart\s+(\d+)') { [int]$Matches[1] } else { 0 }
     $checkWindowEnd   = if ($a -match '-CheckWindowEnd\s+(\d+)')   { [int]$Matches[1] } else { 0 }
-    $shuffle          = [bool]($a -match '-Shuffle')
-    $shuffleInterval  = if ($a -match '-ShuffleInterval\s+(\d+)')  { [int]$Matches[1] } else { 15 }
-    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LogCap = $logCap; CheckInterval = $checkInterval; CheckWindowStart = $checkWindowStart; CheckWindowEnd = $checkWindowEnd; Shuffle = $shuffle; ShuffleInterval = $shuffleInterval; Source = $source }
+    $shuffle             = [bool]($a -match '-Shuffle')
+    $shuffleInterval     = if ($a -match '-ShuffleInterval\s+(\d+)')     { [int]$Matches[1] } else { 15 }
+    $lockScreenTimeout   = if ($a -match '-LockScreenTimeout\s+(\d+)')   { [int]$Matches[1] } else { 10 }
+    $script:cachedConfig = @{ Market = $market; Resolution = $resolution; LockScreen = $lockScreen; LockScreenTimeout = $lockScreenTimeout; LogCap = $logCap; CheckInterval = $checkInterval; CheckWindowStart = $checkWindowStart; CheckWindowEnd = $checkWindowEnd; Shuffle = $shuffle; ShuffleInterval = $shuffleInterval; Source = $source }
     return $script:cachedConfig
 }
 
@@ -552,10 +553,11 @@ function Build-VbsContent($psArgs) {
     return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
 }
 
-function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $false, $shuffleInterval = 15) {
+function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $false, $shuffleInterval = 15, $lockScreenTimeout = 10) {
     $a = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $market"
     if ($resolution)                                        { $a += " -Resolution $resolution" }
     if ($lockScreen)                                        { $a += ' -SetLockScreen' }
+    if ($lockScreen -and $lockScreenTimeout -gt 0)         { $a += " -LockScreenTimeout $lockScreenTimeout" }
     if ($logCap -and $logCap -ne '0')                      { $a += " -LogCap $logCap" }
     if ($checkInterval -ne 60)                             { $a += " -CheckInterval $checkInterval" }
     if ($checkWindowStart -ne 0 -or $checkWindowEnd -ne 0) { $a += " -CheckWindowStart $checkWindowStart -CheckWindowEnd $checkWindowEnd" }
@@ -563,15 +565,16 @@ function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval =
     return $a
 }
 
-function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $null, $shuffleInterval = $null) {
+function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $null, $shuffleInterval = $null, $lockScreenTimeout = $null) {
     $current = Get-TaskConfig
-    if ($null -eq $shuffle)         { $shuffle         = if ($current) { $current.Shuffle }         else { $false } }
-    if ($null -eq $shuffleInterval) { $shuffleInterval = if ($current) { $current.ShuffleInterval } else { 15 } }
+    if ($null -eq $shuffle)             { $shuffle             = if ($current) { $current.Shuffle }             else { $false } }
+    if ($null -eq $shuffleInterval)     { $shuffleInterval     = if ($current) { $current.ShuffleInterval }     else { 15 } }
+    if ($null -eq $lockScreenTimeout)   { $lockScreenTimeout   = if ($current) { $current.LockScreenTimeout }   else { 10 } }
     $script:cachedConfig = $null
     $task = Get-ScheduledTask -TaskName $taskName -EA SilentlyContinue
     $interval = if ($shuffle) { $shuffleInterval } else { $checkInterval }
     if ($task) {
-        $psArgs        = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval
+        $psArgs        = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval $lockScreenTimeout
         Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
         $runLevel      = if ($lockScreen) { 'Highest' } else { 'Limited' }
         $action        = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
@@ -587,7 +590,7 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
             return $false
         }
     } elseif (Test-Path $startupBatPath) {
-        $psArgs = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval
+        $psArgs = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval $lockScreenTimeout
         Set-Content -Path $launcherPath   -Value (Build-VbsContent $psArgs) -Encoding ASCII
         Set-Content -Path $startupBatPath -Value "@echo off`r`nwscript.exe `"$launcherPath`"" -Encoding ASCII
         return $true
@@ -603,7 +606,9 @@ function Show-Status {
     $autostart  = if (!$cfg) { 'Not configured' } elseif ($cfg.Source -eq 'task') { 'Scheduled task' } else { 'Startup folder' }
     $market     = if ($cfg) { $cfg.Market } else { 'Unknown' }
     $resolution = if ($cfg -and $cfg.Resolution) { $cfg.Resolution } else { 'Auto-detect' }
-    $lockScreen    = if ($cfg -and $cfg.LockScreen) { 'Enabled' } else { 'Disabled' }
+    $lsto          = if ($cfg -and $cfg.LockScreen -and $cfg.LockScreenTimeout -gt 0) { [int]$cfg.LockScreenTimeout } else { 0 }
+    $lstoText      = if ($lsto -gt 0) { "$lsto min (AC)" } else { 'Windows default' }
+    $lockScreen    = if ($cfg -and $cfg.LockScreen) { "Enabled, $lstoText" } else { 'Disabled' }
     $logCapDisplay = if (!$cfg -or !$cfg.LogCap -or $cfg.LogCap -eq '0') { 'Off' } `
                      elseif ($cfg.LogCap -match '^(\d+)KB$') { "$($Matches[1]) KB" } `
                      elseif ($cfg.LogCap -match '^(\d+)R$')  { "$($Matches[1]) rows" } `
@@ -635,7 +640,7 @@ function Show-Status {
     $catchUpDays    = if ($mfData -and $mfData.PSObject.Properties['CatchUpDays'] -and [int]$mfData.CatchUpDays -gt 0) { [int]$mfData.CatchUpDays } else { 7 }
     $catchUpDisplay = if ($catchUpEnabled) { "On ($catchUpDays day(s))" } else { 'Off' }
     $labelWidth = 14  # "Downloaded  : ".Length
-    $sepWidth   = ($labelWidth + (@($autostart, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved", $shuffleDisplay, $catchUpDisplay) | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
+    $sepWidth   = ($labelWidth + (@($autostart, $lockScreen, $logCapDisplay, $checkIntervalDisplay, $lastRun, $lastDownloaded, "$wallpapersSet set, $wallpaperCount saved", $shuffleDisplay, $catchUpDisplay) | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum)
     $sep = [string][char]0x2500 * $sepWidth
     Write-Host ''
     Write-Host '  Bing Wallpaper Setter for Windows' -ForegroundColor Cyan
@@ -672,7 +677,7 @@ function Show-Status {
         Write-Host '  Note: lock screen requires the scheduled task. Use [T] to switch.' -ForegroundColor Yellow
     }
     Write-Host ''
-    Write-Host '  [L] Toggle lock screen   [M] Change market' -ForegroundColor DarkGray
+    Write-Host '  [L] Lock screen          [M] Change market' -ForegroundColor DarkGray
     Write-Host '  [R] Change resolution    [W] Run now' -ForegroundColor DarkGray
     Write-Host '  [G] Log cap              [C] Recalculate stats' -ForegroundColor DarkGray
     Write-Host '  [I] Check interval       [O] Check hours' -ForegroundColor DarkGray
@@ -682,57 +687,131 @@ function Show-Status {
     Write-Host ''
 }
 
-function Toggle-LockScreen {
-    $cfg = Get-TaskConfig
-    if (!$cfg) { Write-Host '  No autostart configuration found.' -ForegroundColor Red; Start-Sleep 2; return }
-    if ($cfg.Source -eq 'startup') {
-        Write-Host '  Lock screen update requires the scheduled task (runs elevated).' -ForegroundColor Yellow
-        Write-Host '  Reinstall to enable this feature.' -ForegroundColor DarkGray
-        Start-Sleep 3; return
-    }
-    $newLock = -not $cfg.LockScreen
-    $ok = Invoke-WithSpinner -Label 'Updating lock screen' -Action {
-        Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-    }
-    if ($ok) {
-        $state = if ($newLock) { 'enabled' } else { 'disabled' }
-        Write-Host "  Lock screen $state." -ForegroundColor Green
-        if ($newLock) {
-            # Check for a new wallpaper first so the lock screen is as up to date as possible.
-            Invoke-WithSpinner -Label 'Checking for new wallpaper' -Action {
-                try {
-                    $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $($cfg.Market) -SetLockScreen"
-                    if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
-                    if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
-                    Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
-                } catch {}
+function Set-LockScreenTimeout($minutes) {
+    try {
+        if ($minutes -gt 0) {
+            $secs = $minutes * 60
+            powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO 8EC4B3A5-6868-48c2-BE75-4F3044BE88A7 $secs | Out-Null
+            powercfg /setactive SCHEME_CURRENT | Out-Null
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Show-LockScreenMenu {
+    while ($true) {
+        $cfg = Get-TaskConfig
+        if (!$cfg) { Write-Host '  No autostart configuration found.' -ForegroundColor Red; Start-Sleep 2; return }
+        if ($cfg.Source -eq 'startup') {
+            Write-Host '  Lock screen control requires the scheduled task (runs elevated).' -ForegroundColor Yellow
+            Write-Host '  Reinstall to enable this feature.' -ForegroundColor DarkGray
+            Start-Sleep 3; return
+        }
+        $lsOn  = $cfg.LockScreen
+        $lsto  = if ($cfg.LockScreenTimeout -gt 0) { [int]$cfg.LockScreenTimeout } else { 10 }
+        $lstoDisplay = if ($lsto -gt 0) { "$lsto min" } else { 'Windows default' }
+        Clear-Host
+        Write-Host ''
+        Write-Host '  Lock screen' -ForegroundColor Cyan
+        Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+        Write-Host "  Status  : $(if ($lsOn) { 'Enabled' } else { 'Disabled' })"
+        Write-Host "  Timeout : $lstoDisplay when plugged in (battery: Windows default)"
+        Write-Host ''
+        Write-Host "  [1] Toggle $(if ($lsOn) { 'off' } else { 'on' })"
+        Write-Host '  [2] Set display timeout'
+        Write-Host ''
+        Write-Host '  [B] Back' -ForegroundColor DarkGray
+        Write-Host ''
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        if ($choice -eq 'B') { return }
+        if ($choice -eq '1') {
+            $newLock = -not $lsOn
+            $ok = Invoke-WithSpinner -Label 'Updating lock screen' -Action {
+                Update-Task $cfg.Market $cfg.Resolution $newLock $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $null $null $lsto
             }
-            # Now set the lock screen to whatever is on the desktop.
-            # If a new image was just downloaded the script already set it; this covers the "already up to date" case.
-            try {
-                $desktopWp = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name Wallpaper -EA SilentlyContinue).Wallpaper
-                $lsStats   = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
-                $lsFile    = if ($desktopWp -and (Test-Path $desktopWp)) {
-                    $desktopWp
-                } elseif ($lsStats -and $lsStats.LastDownloaded -and $lsStats.LastDownloaded.Path -and (Test-Path $lsStats.LastDownloaded.Path)) {
-                    $lsStats.LastDownloaded.Path
-                } else {
-                    $null
+            if ($ok) {
+                $state = if ($newLock) { 'enabled' } else { 'disabled' }
+                Write-Host "  Lock screen $state." -ForegroundColor Green
+                if ($newLock) {
+                    if ($lsto -gt 0) { Set-LockScreenTimeout $lsto | Out-Null }
+                    # Check for a new wallpaper first so the lock screen is as up to date as possible.
+                    Invoke-WithSpinner -Label 'Checking for new wallpaper' -Action {
+                        try {
+                            $psArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $($cfg.Market) -SetLockScreen"
+                            if ($cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
+                            if ($cfg.LogCap -and $cfg.LogCap -ne '0') { $psArgs += " -LogCap $($cfg.LogCap)" }
+                            Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
+                        } catch {}
+                    }
+                    # Now set the lock screen to whatever is on the desktop.
+                    # If a new image was just downloaded the script already set it; this covers the "already up to date" case.
+                    try {
+                        $desktopWp = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name Wallpaper -EA SilentlyContinue).Wallpaper
+                        $lsStats   = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+                        $lsFile    = if ($desktopWp -and (Test-Path $desktopWp)) {
+                            $desktopWp
+                        } elseif ($lsStats -and $lsStats.LastDownloaded -and $lsStats.LastDownloaded.Path -and (Test-Path $lsStats.LastDownloaded.Path)) {
+                            $lsStats.LastDownloaded.Path
+                        } else {
+                            $null
+                        }
+                        if ($lsFile) {
+                            $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+                            if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+                            Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $lsFile
+                            Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $lsFile
+                            Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
+                            Write-Host "  Lock screen updated to current wallpaper." -ForegroundColor Green
+                        }
+                    } catch {
+                        Write-Host "  Warning: could not update lock screen: $_" -ForegroundColor Yellow
+                    }
                 }
-                if ($lsFile) {
-                    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
-                    if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
-                    Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $lsFile
-                    Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $lsFile
-                    Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
-                    Write-Host "  Lock screen updated to current wallpaper." -ForegroundColor Green
+            }
+            Start-Sleep 1; return
+        }
+        if ($choice -eq '2') {
+            while ($true) {
+                Clear-Host
+                Write-Host ''
+                Write-Host '  Display timeout (plugged in)' -ForegroundColor Cyan
+                Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
+                Write-Host "  Current: $lstoDisplay"
+                Write-Host '  Battery: Windows default (not managed)'
+                Write-Host ''
+                Write-Host '  [1]  5 minutes'
+                Write-Host '  [2] 10 minutes'
+                Write-Host '  [3] 15 minutes'
+                Write-Host '  [4] 30 minutes'
+                Write-Host '  [C] Custom (enter minutes)'
+                Write-Host '  [D] Windows default (do not manage)'
+                Write-Host ''
+                Write-Host '  [B] Back' -ForegroundColor DarkGray
+                Write-Host ''
+                $sub = (Read-Host '  Choice').Trim().ToUpper()
+                if ($sub -eq 'B') { break }
+                $newTimeout = switch ($sub) { '1' { 5 }; '2' { 10 }; '3' { 15 }; '4' { 30 }; 'D' { 0 }; default { $null } }
+                if ($sub -eq 'C') {
+                    $entry = (Read-Host '  Enter minutes (1-120)').Trim()
+                    if ($entry -match '^\d+$' -and [int]$entry -ge 1 -and [int]$entry -le 120) { $newTimeout = [int]$entry }
+                    else { Write-Host '  Enter a number between 1 and 120.' -ForegroundColor Red; Start-Sleep 2; continue }
                 }
-            } catch {
-                Write-Host "  Warning: could not update lock screen: $_" -ForegroundColor Yellow
+                if ($null -ne $newTimeout) {
+                    $ok = Invoke-WithSpinner -Label 'Updating timeout' -Action {
+                        Update-Task $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd $null $null $newTimeout
+                    }
+                    if ($ok -and $cfg.LockScreen -and $newTimeout -gt 0) {
+                        Set-LockScreenTimeout $newTimeout | Out-Null
+                    }
+                    if ($ok) {
+                        $d = if ($newTimeout -gt 0) { "$newTimeout min" } else { 'Windows default' }
+                        Write-Host "  Timeout set to $d." -ForegroundColor Green
+                    }
+                    Start-Sleep 1; return
+                }
             }
         }
     }
-    Start-Sleep 1
 }
 
 function Show-MarketMenu {
@@ -1423,7 +1502,7 @@ while ($true) {
     Show-Status
     $choice = (Read-Host '  Choice').Trim().ToUpper()
     switch ($choice) {
-        'L' { Toggle-LockScreen }
+        'L' { Show-LockScreenMenu }
         'M' { Show-MarketMenu }
         'R' { Show-ResolutionMenu }
         'W' { Run-Now }
@@ -1536,11 +1615,23 @@ try {
         elseif ($raw -in $noValues)              { $setLockScreen = $false }
         else { Write-Host '  Please enter yes or no.' -ForegroundColor Red }
     } while ($null -eq $setLockScreen)
+
+    $setLockScreenTimeout = 10
+    if ($setLockScreen) {
+        do {
+            Write-Host "  Lock screen display timeout when plugged in, in minutes [10]: " -NoNewline
+            $raw = (Read-Host).Trim()
+            if ($raw -eq '') { $setLockScreenTimeout = 10; break }
+            elseif ($raw -match '^\d+$' -and [int]$raw -ge 1 -and [int]$raw -le 120) { $setLockScreenTimeout = [int]$raw; break }
+            else { Write-Host '  Enter a number between 1 and 120, or press Enter for 10 minutes.' -ForegroundColor Red }
+        } while ($true)
+    }
     Write-Host ""
 
     $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
     if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution $Resolution" }
     if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
+    if ($setLockScreen -and $setLockScreenTimeout -gt 0) { $psArgs += " -LockScreenTimeout $setLockScreenTimeout" }
     Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII -ErrorAction Stop
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
@@ -1666,6 +1757,14 @@ try {
         $dlTitle = if ($lastLog -match '"([^"]+)"') { $Matches[1] } else { $null }
         Write-Host "Step 4: Wallpaper set." -ForegroundColor Green
         if ($dlTitle) { Write-Host "  $dlTitle" -ForegroundColor DarkGray }
+    }
+
+    if ($setLockScreen -and $setLockScreenTimeout -gt 0) {
+        try {
+            $secs = $setLockScreenTimeout * 60
+            powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO 8EC4B3A5-6868-48c2-BE75-4F3044BE88A7 $secs | Out-Null
+            powercfg /setactive SCHEME_CURRENT | Out-Null
+        } catch {}
     }
 
     Write-Host ""
