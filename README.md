@@ -27,12 +27,12 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 
 - Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
 - Updates the wallpaper on all connected monitors. Detects monitor layout changes between checks and reapplies automatically, so switching docking stations does not leave new screens blank.
-- Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`. You can also add your own images here — shuffle will pick them up automatically.
+- Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`. You can also add your own images here and shuffle will pick them up automatically.
 - Keeps a run log and stats file under `Pictures\BingWallpaper\Data\`.
 - Optional lock screen wallpaper update (primary monitor only).
 - Retries automatically if the network is unavailable at startup.
 - Checks for new releases and shows a notice in the settings menu when one is available.
-- Optional shuffle mode — rotates randomly through your saved wallpapers on a configurable interval (default 15 min). A manifest file keeps track of recent picks so the same image is not repeated too soon.
+- Optional shuffle mode that rotates randomly through your saved wallpapers on a configurable interval (default 15 min). A manifest file keeps track of recent picks so the same image is not repeated too soon.
 - History catch-up that automatically downloads the last 7 days of Bing wallpapers whenever a new image is added, so days missed while your PC was off are filled in. Configurable or can be turned off entirely via Settings.
 - `Settings.bat` for management and uninstall.
 
@@ -90,13 +90,13 @@ Shuffle rotates through your saved Bing wallpapers at a set interval rather than
 
 **To enable:** open `Settings.bat` and choose **[S] Shuffle**, then **[1] Toggle on**.
 
-**Interval** — how often the wallpaper changes (default 15 min, minimum 5 min). Change via **[S] → [2]**.
+**Interval**: how often the wallpaper changes (default 15 min, minimum 5 min). Change via **[S] → [2]**.
 
-**History size** — how many recent wallpapers are excluded from the next pick (default 10). If you have 50 saved wallpapers and history is set to 10, the next pick is drawn from the other 40. Change via **[S] → [3]**.
+**History size**: how many recent wallpapers are excluded from the next pick (default 10). If you have 50 saved wallpapers and history is set to 10, the next pick is drawn from the other 40. Change via **[S] → [3]**.
 
-**Recalculate** — rescans your Wallpapers folder and rebuilds the index. Use this if you have added or removed images manually. Available via **[S] → [4]**.
+**Recalculate**: rescans your Wallpapers folder and rebuilds the index. Use this if you have added or removed images manually. Available via **[S] → [4]**.
 
-**Auto-recalculate** — runs a recalculate automatically on a schedule (default every 7 days) so the index stays in sync without manual intervention. Configure via **[S] → [5]**, or set to Off to disable.
+**Auto-recalculate**: runs a recalculate automatically on a schedule (default every 7 days) so the index stays in sync without manual intervention. Configure via **[S] → [5]**, or set to Off to disable.
 
 Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day. You can also drop your own images (`.jpg`, `.jpeg`, `.png`, `.bmp`) into the `Wallpapers` folder and they will be included automatically.
 
