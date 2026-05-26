@@ -11,7 +11,7 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
    - [b. SmartScreen warning](#1b-windows-smartscreen-warning)
    - [c. Requirements](#1c-requirements)
 2. **Features**
-   - [a. Features](#2a-features)
+   - [a. Overview](#2a-overview)
    - [b. Shuffle mode](#2b-shuffle-mode)
    - [c. History catch-up](#2c-history-catch-up)
    - [d. Lock screen](#2d-lock-screen)
@@ -22,7 +22,9 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
 
 ---
 
-## 1a. Installation
+## 1. Setup
+
+### 1a. Installation
 
 1. Download `BingWallpaperSetup_v[version].exe` from the [latest release](../../releases/latest).
 2. Run it. Windows may show a SmartScreen warning (see below).
@@ -31,7 +33,7 @@ Automatically downloads the Bing wallpaper of the day and sets it as your Window
    - Register a scheduled task that runs at logon and checks hourly until the day's wallpaper is set.
    - Download and set today's wallpaper immediately.
 
-## 1b. Windows SmartScreen warning
+### 1b. Windows SmartScreen warning
 
 When you first run the EXE, Windows Defender SmartScreen may show:
 
@@ -41,7 +43,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 
 **To proceed:** click **More info**, then **Run anyway**.
 
-## 1c. Requirements
+### 1c. Requirements
 
 **Operating system**
 - Windows 10, 11 or later (full support)
@@ -55,7 +57,9 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - Internet connection (required to download wallpapers from Bing)
 - Administrator privileges (required during installation and for lock screen updates)
 
-## 2a. Features
+## 2. Features
+
+### 2a. Overview
 
 - Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
 - Updates the wallpaper on all connected monitors. Detects monitor layout changes between checks and reapplies automatically, so switching docking stations does not leave new screens blank.
@@ -70,7 +74,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 
 > **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows does not support per-monitor lock screens).
 
-## 2b. Shuffle mode
+### 2b. Shuffle mode
 
 Shuffle rotates through your saved Bing wallpapers at a set interval rather than waiting for the next daily download. It picks randomly from your library, avoiding recently shown images so you don't see the same wallpaper twice in a row.
 
@@ -86,7 +90,7 @@ Shuffle rotates through your saved Bing wallpapers at a set interval rather than
 
 Shuffle only runs while your PC is active. The library grows automatically as new Bing wallpapers are downloaded each day. You can also drop your own images (`.jpg`, `.jpeg`, `.png`, `.bmp`) into the `Wallpapers` folder and they will be included automatically.
 
-## 2c. History catch-up
+### 2c. History catch-up
 
 History catch-up automatically downloads recent Bing wallpapers that your PC missed, useful if you were away for a few days or just installed the program and want to fill in your library straight away.
 
@@ -102,7 +106,7 @@ When today's wallpaper is downloaded, the program checks the previous days (up t
 
 Changing the day count or turning catch-up on both trigger an immediate download so your library is up to date straight away.
 
-## 2d. Lock screen
+### 2d. Lock screen
 
 When lock screen updates are enabled, the program sets the lock screen image to the current wallpaper each time a new one is downloaded.
 
@@ -112,7 +116,9 @@ The default timeout is 10 minutes on AC. To let Windows manage it entirely, choo
 
 > **Multi-monitor note:** lock screen only updates on the primary monitor. Windows does not support per-monitor lock screens.
 
-## 3a. Status and management
+## 3. Management
+
+### 3a. Status and management
 
 Open `Pictures\BingWallpaper\Settings.bat` to manage the wallpaper setter.
 
@@ -165,7 +171,7 @@ Settings
 
 Market and resolution changes take effect at the next logon or hourly check, or immediately via **[W] Run now**.
 
-## 3b. Parameters
+### 3b. Parameters
 
 `BingWallpaperSetup.ps1` accepts optional parameters if you prefer to run the script directly:
 
@@ -179,6 +185,6 @@ Example:
 .\BingWallpaperSetup.ps1 -Market en-GB -Resolution 3840x2160
 ```
 
-## 3c. Uninstall
+### 3c. Uninstall
 
 Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts are removed. Your wallpaper photos stay. You will be asked whether to also delete the run log and stats.
