@@ -4,6 +4,12 @@
 
 Automatically downloads the Bing wallpaper of the day and sets it as your Windows desktop background. Optionally updates the lock screen too.
 
+---
+
+[Installation](#installation) · [SmartScreen warning](#windows-smartscreen-warning) · [Features](#features) · [Status and management](#status-and-management) · [Shuffle mode](#shuffle-mode) · [History catch-up](#history-catch-up) · [Lock screen](#lock-screen) · [Parameters](#parameters) · [Uninstall](#uninstall) · [Requirements](#requirements)
+
+---
+
 ## Installation
 
 1. Download `BingWallpaperSetup_v[version].exe` from the [latest release](../../releases/latest).
@@ -154,7 +160,14 @@ Open `Settings.bat` and choose **[U] Uninstall**. The scheduled task and scripts
 
 ## Requirements
 
+**Operating system**
 - Windows 10, 11 or later (full support)
-- Windows 8 / 8.1 (partial: wallpaper works, lock screen feature not available)
-- Windows 7 (not officially supported: wallpaper may work via the startup folder fallback, but lock screen is unavailable and [PowerShell 3 must be installed manually](https://www.microsoft.com/en-us/download/details.aspx?id=34595))
-- PowerShell 3 or later
+- Windows 8 / 8.1 (partial: wallpaper works, lock screen not available)
+- Windows 7 (not officially supported: wallpaper may work via the startup folder fallback, lock screen unavailable — [PowerShell 3 must be installed manually](https://www.microsoft.com/en-us/download/details.aspx?id=34595))
+
+**PowerShell**
+- Version 3 or later (built in on Windows 8 and above)
+
+**Other**
+- Internet connection (required to download wallpapers from Bing)
+- Administrator privileges (required during installation and for lock screen updates)
