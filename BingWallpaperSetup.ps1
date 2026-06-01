@@ -38,11 +38,13 @@ Start-Sleep -Milliseconds 80
 
 # Disable QuickEdit mode so accidental clicks don't pause the script
 try {
-    Add-Type -MemberDefinition @'
+    if (-not ('W.K' -as [type])) {
+        Add-Type -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
 [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
 [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
 '@ -Name K -Namespace W
+    }
     $h = [W.K]::GetStdHandle(-10); $m = 0
     [void][W.K]::GetConsoleMode($h, [ref]$m)
     [void][W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
@@ -156,18 +158,19 @@ $updateFile    = Join-Path $installRoot 'Data\UpdateInfo.json'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
-    "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg" | Add-Content $log -Encoding UTF8
+    $line = "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg"
+    [System.IO.File]::AppendAllText($log, "$line`r`n", [System.Text.Encoding]::UTF8)
     if ($LogCap -ne '0' -and (Test-Path $log)) {
         if ($LogCap -match '^(\d+)KB$') {
             $maxBytes = [int]$Matches[1] * 1024
-            if ((Get-Item $log).Length -gt $maxBytes) {
+            if ((Get-Item $log).Length -gt ($maxBytes * 1.2)) {
                 $lines = Get-Content $log
                 $lines | Select-Object -Last ([math]::Floor($lines.Count * 0.8)) | Set-Content $log -Encoding UTF8
             }
         } elseif ($LogCap -match '^(\d+)R$') {
             $maxRows = [int]$Matches[1]
             $lines = Get-Content $log
-            if ($lines.Count -gt $maxRows) { $lines | Select-Object -Last $maxRows | Set-Content $log -Encoding UTF8 }
+            if ($lines.Count -gt [math]::Floor($maxRows * 1.2)) { $lines | Select-Object -Last $maxRows | Set-Content $log -Encoding UTF8 }
         }
     }
 }
@@ -471,7 +474,7 @@ Start-Sleep -Milliseconds 80
 
 # Disable QuickEdit mode so accidental clicks don't pause the script
 try {
-    Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n); [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m); [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);' -Name K -Namespace W
+    if (-not ('W.K' -as [type])) { Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n); [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m); [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);' -Name K -Namespace W }
     $h = [W.K]::GetStdHandle(-10); $m = 0
     [void][W.K]::GetConsoleMode($h, [ref]$m)
     [void][W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
@@ -1549,6 +1552,7 @@ while ($true) {
 # - Install - - - - - - - - - - - - - - - - - - - - - - - - - #
 
 function Build-VbsContent($psArgs) {
+    # Note: identical copy exists in Settings.ps1 content above (search "function Build-VbsContent"). Keep both in sync.
     $escaped = $psArgs -replace '"', '""'
     return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
 }

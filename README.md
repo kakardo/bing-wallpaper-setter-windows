@@ -48,7 +48,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 **Operating system**
 - Windows 10, 11 or later (full support)
 - Windows 8 / 8.1 (partial: wallpaper works, lock screen not available)
-- Windows 7 (not officially supported: wallpaper may work via the startup folder fallback, lock screen unavailable — [PowerShell 3 must be installed manually](https://www.microsoft.com/en-us/download/details.aspx?id=34595))
+- Windows 7 (not officially supported: wallpaper may work via the startup folder fallback, lock screen unavailable — requires [PowerShell 3](https://www.microsoft.com/en-us/download/details.aspx?id=34595) or later, PS 4 for scheduled task autostart)
 
 **PowerShell**
 - Version 3 or later (built in on Windows 8 and above)
