@@ -177,7 +177,7 @@ function Invoke-HistoryCatchUp {
     $added = 0
     for ($i = 0; $i -le [math]::Min($Days, 7); $i++) {
         try {
-            $hApi = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=$i&n=1&mkt=$Mkt" -ErrorAction Stop
+            $hApi = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=$i&n=1&mkt=$Mkt" -TimeoutSec 30 -ErrorAction Stop
             $hImg = $hApi.images[0]
             if (!$hImg -or !$hImg.urlbase -or !$hImg.startdate) { continue }
             $hYear  = $hImg.startdate.Substring(0, 4)
@@ -190,7 +190,7 @@ function Invoke-HistoryCatchUp {
             $hFile  = "$hDir\${hDate}_${hName}_${hRes}.jpg"
             if (Test-Path $hFile) { continue }
             if (!(Test-Path $hDir)) { New-Item -ItemType Directory -Path $hDir -Force | Out-Null }
-            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFile -ErrorAction Stop
+            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFile -TimeoutSec 30 -ErrorAction Stop
             if ((Get-Item $hFile).Length -eq 0) { Remove-Item $hFile; continue }
             Write-Log "History: downloaded ${hDate}_${hName}_${hRes}.jpg"
             $added++
@@ -238,7 +238,7 @@ if ($CatchUpOnly) {
 
 $api = $null
 if ($Install) {
-    try { $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop } catch {}
+    try { $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -TimeoutSec 30 -ErrorAction Stop } catch {}
     if (!$api) { Write-Log 'Skipped | Network unavailable at install time'; exit }
 } else {
     # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
@@ -251,7 +251,7 @@ if ($Install) {
     foreach ($phase in $retrySchedule) {
         for ($i = 0; $i -lt $phase.Count; $i++) {
             try {
-                $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -ErrorAction Stop
+                $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -TimeoutSec 30 -ErrorAction Stop
                 break
             } catch {
                 $attempt++
@@ -282,7 +282,7 @@ try {
     $isNew = !(Test-Path $file)
     if ($isNew) {
         if (!$Install) { Write-Log 'Started' }
-        Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -ErrorAction Stop
+        Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -TimeoutSec 30 -ErrorAction Stop
         if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
         $set = [WallpaperHelper]::SetOnAllMonitors($file)
