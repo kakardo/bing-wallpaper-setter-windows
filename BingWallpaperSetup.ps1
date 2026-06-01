@@ -18,7 +18,7 @@ param(
 
 # Self-elevate if not running as administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $psArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Market $Market -Resolution $Resolution"
+    $psArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Market `"$Market`" -Resolution `"$Resolution`""
     Start-Process powershell.exe $psArgs -Verb RunAs
     exit
 }
@@ -193,7 +193,8 @@ function Invoke-HistoryCatchUp {
             $hYear  = $hImg.startdate.Substring(0, 4)
             $hMonth = $hImg.startdate.Substring(4, 2)
             $hDay   = $hImg.startdate.Substring(6, 2)
-            $hName  = if ($hImg.title) { $hImg.title -replace '[\\/:*?"<>|]', '_' } else { 'Bing' }
+            $hNameRaw = ($hImg.title -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim(' .')
+            $hName  = if ($hNameRaw) { $hNameRaw.Substring(0, [math]::Min(80, $hNameRaw.Length)) } else { 'Bing' }
             $hDate  = "$hYear-$hMonth-$hDay"
             $hRes   = if ($Res) { $Res } else { '1920x1080' }
             $hDir   = Join-Path $installRoot "Wallpapers\$hYear\$hMonth"
@@ -285,7 +286,8 @@ $day   = $img.startdate.Substring(6, 2)
 $dir = Join-Path $installRoot "Wallpapers\$year\$month"
 if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
-$name = if ($img.title) { $img.title -replace '[\\/:*?"<>|]', '_' } else { 'Bing' }
+$nameRaw = ($img.title -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim(' .')
+$name = if ($nameRaw) { $nameRaw.Substring(0, [math]::Min(80, $nameRaw.Length)) } else { 'Bing' }
 $date = "$year-$month-$day"
 $file = "$dir\${date}_${name}_${Resolution}.jpg"
 
@@ -525,8 +527,8 @@ function Get-UpdateInfo {
     if ($null -ne $script:updateAvailable) { return }
     try {
         $info   = if (Test-Path $updateFile) { Get-Content $updateFile -Raw | ConvertFrom-Json } else { $null }
-        $latest = if ($info -and $info.LatestVersion) { $info.LatestVersion } else { $null }
-        $curr   = if ($script:cachedStats -and $script:cachedStats.Version) { $script:cachedStats.Version } else { '0.0.0' }
+        $latest = if ($info -and $info.LatestVersion -match '^\d+\.\d+(\.\d+)?$') { $info.LatestVersion } else { $null }
+        $curr   = if ($script:cachedStats -and $script:cachedStats.Version -match '^\d+\.\d+(\.\d+)?$') { $script:cachedStats.Version } else { '0.0.0' }
         $script:updateAvailable = if ($latest -and [System.Version]$latest -gt [System.Version]$curr) { "v$latest" } else { '' }
     } catch {
         $script:updateAvailable = ''
@@ -602,7 +604,7 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
-        $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         try {
             Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -EA Stop | Out-Null
             return $true
@@ -713,7 +715,9 @@ function Set-LockScreenTimeout($minutes) {
         if ($minutes -gt 0) {
             $secs = $minutes * 60
             powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO 8EC4B3A5-6868-48c2-BE75-4F3044BE88A7 $secs | Out-Null
+            if ($LASTEXITCODE -ne 0) { return $false }
             powercfg /setactive SCHEME_CURRENT | Out-Null
+            if ($LASTEXITCODE -ne 0) { return $false }
         }
         return $true
     } catch { return $false }
@@ -866,7 +870,7 @@ function Show-MarketMenu {
         $newMarket = $null
         if ($choice -eq 'C') {
             $entry = (Read-Host '  Enter market code (e.g. en-GB)').Trim()
-            if ($entry -notmatch '^[a-zA-Z]{2}-[a-zA-Z]{2}$') {
+            if ($entry -notmatch '^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,4}){1,2}$') {
                 Write-Host '  Invalid format. Use xx-XX (e.g. en-GB).' -ForegroundColor Red; Start-Sleep 2; continue
             }
             $validation = Invoke-WithSpinner -Label 'Validating with Bing' -Action {
@@ -1125,7 +1129,7 @@ function Try-ScheduledTask {
             $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
             $triggers      = @($triggerLogon, $triggerHourly)
             $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-            $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+            $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -EA Stop | Out-Null
             Remove-Item $startupBatPath -EA SilentlyContinue
             return $null
@@ -1680,7 +1684,7 @@ try {
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
         $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-        $principal     = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
+        $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
             Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
         } else {
