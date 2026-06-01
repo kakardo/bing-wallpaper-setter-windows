@@ -26,6 +26,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 # Allow this session to load .ps1 files even when the system policy is Restricted
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
 
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13 } catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
+
 Clear-Host
 
 $initSpinRs = [runspacefactory]::CreateRunspace(); $initSpinRs.Open()
@@ -135,6 +137,8 @@ param(
 $scriptVersion = '2.6'
 $logPrefix     = if ($Install) { '[INSTALL] ' } else { '' }
 
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13 } catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
+
 if (!$Resolution) {
     Add-Type -AssemblyName System.Windows.Forms
     $w = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
@@ -241,11 +245,10 @@ if ($Install) {
     try { $api = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$Market" -TimeoutSec 30 -ErrorAction Stop } catch {}
     if (!$api) { Write-Log 'Skipped | Network unavailable at install time'; exit }
 } else {
-    # Retry schedule: 10s x6, 60s x15, 300s x9 (up to ~1 hour total)
+    # Retry schedule: 10s x6, 30s x6 (~3 minutes total, fits within the 5-minute task limit)
     $retrySchedule = @(
-        @{ Interval = 10;  Count = 6  },
-        @{ Interval = 60;  Count = 15 },
-        @{ Interval = 300; Count = 9  }
+        @{ Interval = 10; Count = 6 },
+        @{ Interval = 30; Count = 6 }
     )
     $attempt = 0
     foreach ($phase in $retrySchedule) {
