@@ -200,8 +200,10 @@ function Invoke-HistoryCatchUp {
             $hFile  = "$hDir\${hDate}_${hName}_${hRes}.jpg"
             if (Test-Path $hFile) { continue }
             if (!(Test-Path $hDir)) { New-Item -ItemType Directory -Path $hDir -Force | Out-Null }
-            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFile -TimeoutSec 30 -ErrorAction Stop
-            if ((Get-Item $hFile).Length -eq 0) { Remove-Item $hFile; continue }
+            $hFileTmp = "$hFile.tmp"
+            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFileTmp -TimeoutSec 30 -ErrorAction Stop
+            if ((Get-Item $hFileTmp).Length -eq 0) { Remove-Item $hFileTmp; continue }
+            Move-Item $hFileTmp $hFile -Force
             Write-Log "History: downloaded ${hDate}_${hName}_${hRes}.jpg"
             $added++
             try {
@@ -230,7 +232,7 @@ if (-not $Install) {
         $monitorsChanged = $false
         $currentFingerprint = ''
         try {
-            $currentFingerprint = ([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X } | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)+$($_.Bounds.X)+$($_.Bounds.Y)" }) -join '|'
+            $currentFingerprint = ([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y } | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)+$($_.Bounds.X)+$($_.Bounds.Y)" }) -join '|'
             if ($todayDone) {
                 $storedFingerprint = if ($earlyStats.PSObject.Properties['MonitorFingerprint']) { $earlyStats.MonitorFingerprint } else { '' }
                 if ($currentFingerprint -ne $storedFingerprint) { $monitorsChanged = $true }
@@ -291,8 +293,10 @@ try {
     $isNew = !(Test-Path $file)
     if ($isNew) {
         if (!$Install) { Write-Log 'Started' }
-        Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $file -TimeoutSec 30 -ErrorAction Stop
-        if ((Get-Item $file).Length -eq 0) { Remove-Item $file; Write-Log 'Error: downloaded file is empty'; exit }
+        $fileTmp = "$file.tmp"
+        Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
+        if ((Get-Item $fileTmp).Length -eq 0) { Remove-Item $fileTmp; Write-Log 'Error: downloaded file is empty'; exit }
+        Move-Item $fileTmp $file -Force
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
         $set = [WallpaperHelper]::SetOnAllMonitors($file)
         if ($set -eq 0) {
@@ -415,7 +419,7 @@ try {
             $today      = (Get-Date).ToString('yyyy-MM-dd')
             $updateInfo = if (Test-Path $updateFile) { Get-Content $updateFile -Raw | ConvertFrom-Json } else { $null }
             if (-not $updateInfo -or $updateInfo.CheckedAt -ne $today) {
-                $rel = Invoke-RestMethod 'https://api.github.com/repos/kakardo/bing-wallpaper-setter-windows/releases/latest' -TimeoutSec 5 -EA Stop
+                $rel = Invoke-RestMethod 'https://api.github.com/repos/kakardo/bing-wallpaper-setter-windows/releases/latest' -TimeoutSec 5 -UserAgent 'kakardo-bing-wallpaper-setter' -EA Stop
                 Save-JsonFile ([PSCustomObject]@{ LatestVersion = ($rel.tag_name -replace '^v', ''); CheckedAt = $today }) $updateFile 2
             }
         } catch {}
@@ -592,7 +596,7 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
     $interval = if ($shuffle) { $shuffleInterval } else { $checkInterval }
     if ($task) {
         $psArgs        = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval $lockScreenTimeout
-        Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
+        Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding Unicode
         $runLevel      = if ($lockScreen) { 'Highest' } else { 'Limited' }
         $action        = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
@@ -1114,7 +1118,7 @@ function Try-ScheduledTask {
         try {
             $runLevel  = if ($cfg.LockScreen) { 'Highest' } else { 'Limited' }
             $psArgs    = Build-Args $cfg.Market $cfg.Resolution $cfg.LockScreen $cfg.LogCap $cfg.CheckInterval $cfg.CheckWindowStart $cfg.CheckWindowEnd
-            Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII
+            Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding Unicode
             $interval  = if ($cfg.Shuffle) { $cfg.ShuffleInterval } else { $cfg.CheckInterval }
             $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
             $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
@@ -1658,7 +1662,7 @@ try {
     if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution $Resolution" }
     if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
     if ($setLockScreen -and $setLockScreenTimeout -gt 0) { $psArgs += " -LockScreenTimeout $setLockScreenTimeout" }
-    Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding ASCII -ErrorAction Stop
+    Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding Unicode -ErrorAction Stop
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
 
