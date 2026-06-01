@@ -927,7 +927,7 @@ function Run-Now {
     $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
     Write-Host ''
     if (Test-Path $logFile) {
-        Get-Content $logFile | Select-Object -Last 2 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        Get-Content $logFile -Tail 2 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
     }
     Write-Host ''
     Start-Sleep 2
@@ -1081,7 +1081,7 @@ function Show-LogCapMenu {
 
 function Show-Log {
     if (!(Test-Path $logFile)) { Write-Host '  No log file found.' -ForegroundColor DarkGray; Start-Sleep 2; return }
-    $lines = Get-Content $logFile | Select-Object -Last 10
+    $lines = Get-Content $logFile -Tail 10
     Write-Host ''
     Write-Host '  Recent log entries' -ForegroundColor Cyan
     Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
@@ -1396,7 +1396,7 @@ function Show-HistoryMenu {
             $script:cachedStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
             Write-Host ''
             if (Test-Path $logFile) {
-                Get-Content $logFile | Select-Object -Last 3 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+                Get-Content $logFile -Tail 3 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
             }
             Write-Host ''
             Start-Sleep 2
