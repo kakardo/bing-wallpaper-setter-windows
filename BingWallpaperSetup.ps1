@@ -215,6 +215,19 @@ function Save-JsonFile($obj, $path, $depth = 3) {
     catch { Remove-Item $tmp -EA SilentlyContinue; throw }
 }
 
+function Read-JsonFile($path, $default = $null) {
+    if (Test-Path $path) { try { Get-Content $path -Raw | ConvertFrom-Json } catch { $default } } else { $default }
+}
+
+function New-StatsObject {
+    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
+}
+
+function New-ManifestObject {
+    [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() }
+}
+
+
 if ($Resolution -notin '1920x1080','1366x768','3840x2160') {
     Write-Log "Error | Unsupported resolution '$Resolution'"; exit
 }
@@ -248,7 +261,7 @@ function Invoke-HistoryCatchUp {
             Write-Log "History: downloaded ${hDate}_${hName}_${hRes}.jpg"
             $added++
             try {
-                $hmf   = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                $hmf   = Read-JsonFile $manifestFile (New-ManifestObject)
                 $hlist = @($hmf.Wallpapers)
                 $hrel  = $hFile.Substring($installRoot.Length + 1)
                 if ($hrel -notin $hlist) {
@@ -271,7 +284,7 @@ if (-not $Install) {
             $currentHour = (Get-Date).Hour
             if ($currentHour -lt $CheckWindowStart -or $currentHour -gt $CheckWindowEnd) { exit }
         }
-        $earlyStats = if (Test-Path $statsFile) { try { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } catch { $null } } else { $null }
+        $earlyStats = Read-JsonFile $statsFile
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
         $monitorsChanged = $false
         $currentFingerprint = ''
@@ -355,7 +368,7 @@ try {
             Write-Log "Wallpaper set | Monitors: $set | `"$title`""
             Write-Host "Wallpaper set on $set monitor(s): `"$title`""
             try {
-                $stats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
+                $stats = Read-JsonFile $statsFile (New-StatsObject)
                 $now   = Get-Date
                 $today = $now.ToString('yyyy-MM-dd')
                 $stats.TimesRun++
@@ -368,7 +381,7 @@ try {
                 Save-JsonFile $stats $statsFile
             } catch {}
             try {
-                $mf      = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                $mf      = Read-JsonFile $manifestFile (New-ManifestObject)
                 $list    = @($mf.Wallpapers)
                 $relFile = $file.Substring($installRoot.Length + 1)
                 if ($relFile -notin $list) {
@@ -402,7 +415,7 @@ try {
             Write-Host "Wallpaper is already up to date."
         }
         try {
-            $stats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = @{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = @{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
+            $stats = Read-JsonFile $statsFile (New-StatsObject)
             $now   = Get-Date
             $today = $now.ToString('yyyy-MM-dd')
             $stats.TimesRun++
@@ -429,7 +442,7 @@ try {
     }
     if ($Shuffle -and -not $Install) {
         try {
-            $mf = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+            $mf = Read-JsonFile $manifestFile
             if ($mf -and $mf.RecalcInterval -and $mf.RecalcInterval -gt 0) {
                 $lastRecalc = if ($mf.LastRecalc) { try { [datetime]::ParseExact($mf.LastRecalc, 'yyyy-MM-dd', $null) } catch { [datetime]::MinValue } } else { [datetime]::MinValue }
                 if (((Get-Date) - $lastRecalc).TotalDays -ge $mf.RecalcInterval) {
@@ -442,7 +455,7 @@ try {
             $allJpgs = @(Get-ChildItem (Join-Path $installRoot 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | Select-Object -ExpandProperty FullName)
             if ($allJpgs.Count -gt 0) {
                 $histSize = if ($mf -and $mf.HistorySize) { $mf.HistorySize } else { 10 }
-                $histData = if (Test-Path $historyFile) { try { Get-Content $historyFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                $histData = Read-JsonFile $historyFile
                 # Migrate legacy history from Wallpapers.json on first run
                 if (-not $histData -and $mf -and $mf.History) { $histData = [PSCustomObject]@{ History = $mf.History } }
                 $history  = @(if ($histData -and $histData.History) { $histData.History } else { @() })
@@ -457,7 +470,7 @@ try {
                     Write-Log "Shuffle | $($idx + 1)/$($allJpgs.Count) | `"$(Split-Path $shuffleFile -Leaf)`""
                     Save-JsonFile ([PSCustomObject]@{ History = @(@($idx) + $history | Select-Object -First $histSize) }) $historyFile
                     try {
-                        $sStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                        $sStats = Read-JsonFile $statsFile
                         if ($sStats) {
                             if (-not $sStats.PSObject.Properties['TimesShuffled']) { $sStats | Add-Member -NotePropertyName TimesShuffled -NotePropertyValue 0 -Force }
                             $sStats.TimesShuffled++
@@ -473,7 +486,7 @@ try {
     if (-not $Install) {
         try {
             $today      = (Get-Date).ToString('yyyy-MM-dd')
-            $updateInfo = if (Test-Path $updateFile) { try { Get-Content $updateFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+            $updateInfo = Read-JsonFile $updateFile
             if (-not $updateInfo -or $updateInfo.CheckedAt -ne $today) {
                 $rel = Invoke-RestMethod 'https://api.github.com/repos/kakardo/bing-wallpaper-setter-windows/releases/latest' -TimeoutSec 5 -UserAgent 'kakardo-bing-wallpaper-setter' -EA Stop
                 Save-JsonFile ([PSCustomObject]@{ LatestVersion = ($rel.tag_name -replace '^v', ''); CheckedAt = $today }) $updateFile 2
@@ -579,10 +592,25 @@ function Save-JsonFile($obj, $path, $depth = 3) {
     catch { Remove-Item $tmp -EA SilentlyContinue; throw }
 }
 
+function Read-JsonFile($path, $default = $null) {
+    if (Test-Path $path) { try { Get-Content $path -Raw | ConvertFrom-Json } catch { $default } } else { $default }
+}
+
+function New-StatsObject {
+    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
+}
+
+function New-ManifestObject {
+    [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() }
+}
+
+function Reload-CachedStats { $script:cachedStats = Read-JsonFile $statsFile }
+
+
 function Get-UpdateInfo {
     if ($null -ne $script:updateAvailable) { return }
     try {
-        $info   = if (Test-Path $updateFile) { try { Get-Content $updateFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+        $info   = Read-JsonFile $updateFile
         $latest = if ($info -and $info.LatestVersion -match '^\d+\.\d+(\.\d+)?$') { $info.LatestVersion } else { $null }
         $curr   = if ($script:cachedStats -and $script:cachedStats.Version -match '^\d+\.\d+(\.\d+)?$') { $script:cachedStats.Version } else { '0.0.0' }
         $script:updateAvailable = if ($latest -and [System.Version]$latest -gt [System.Version]$curr) { "v$latest" } else { '' }
@@ -711,7 +739,7 @@ function Show-Status {
     $shuffleOn      = $cfg -and $cfg.Shuffle
     $si             = if ($cfg -and $cfg.ShuffleInterval) { $cfg.ShuffleInterval } else { 15 }
     $siDisplay      = if ($si -lt 60) { "$si min" } elseif ($si -eq 60) { '1 hour' } else { "$([int]($si / 60)) hours" }
-    $mfData         = if (Test-Path $manifestFile) { try { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } catch { $null } } else { $null }
+    $mfData         = Read-JsonFile $manifestFile
     $mfCount        = if ($mfData) { $mfData.Count } else { 0 }
     $mfHs           = if ($mfData -and $mfData.HistorySize) { $mfData.HistorySize } else { 10 }
     $shuffleDisplay = if ($shuffleOn) { "On (every $siDisplay, history: $mfHs, $mfCount wallpapers)" } else { 'Off' }
@@ -828,7 +856,7 @@ function Show-LockScreenMenu {
                     # If a new image was just downloaded the script already set it; this covers the "already up to date" case.
                     try {
                         $desktopWp = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name Wallpaper -EA SilentlyContinue).Wallpaper
-                        $lsStats   = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                        $lsStats   = Read-JsonFile $statsFile
                         $lsFile    = if ($desktopWp -and (Test-Path $desktopWp)) {
                             $desktopWp
                         } elseif ($lsStats -and $lsStats.LastDownloaded -and $lsStats.LastDownloaded.Path -and (Test-Path $lsStats.LastDownloaded.Path)) {
@@ -1003,7 +1031,7 @@ function Run-Now {
     Invoke-WithSpinner -Label 'Running wallpaper update' -Action {
         Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
     }
-    $script:cachedStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+    Reload-CachedStats
     Write-Host ''
     if (Test-Path $logFile) {
         Get-Content $logFile -Tail 2 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
@@ -1213,14 +1241,14 @@ function Invoke-Recalculate {
     $count = Invoke-WithSpinner -Label 'Recalculating' -Action {
         $jpgs   = @(Get-ChildItem (Join-Path $InstallDir 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) })
         $c      = $jpgs.Count
-        $stats  = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
+        $stats  = Read-JsonFile $statsFile (New-StatsObject)
         $stats.WallpaperCount = $c
         Save-JsonFile $stats $statsFile
-        $existing = if (Test-Path $manifestFile) { try { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } catch { $null } } else { $null }
+        $existing = Read-JsonFile $manifestFile
         $hs = if ($existing -and $existing.HistorySize) { $existing.HistorySize } else { 10 }
         $ri = if ($existing -and $existing.RecalcInterval -ne $null) { $existing.RecalcInterval } else { 7 }
         Save-JsonFile ([PSCustomObject]@{ Count = $c; HistorySize = $hs; History = @(); RecalcInterval = $ri; LastRecalc = (Get-Date).ToString('yyyy-MM-dd'); Wallpapers = $jpgs }) $manifestFile
-        $script:cachedStats = try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null }
+        Reload-CachedStats
         return $c
     }
     Write-Host "  Done. $count wallpaper(s) indexed." -ForegroundColor Green
@@ -1230,7 +1258,7 @@ function Invoke-Recalculate {
 function Show-ShuffleMenu {
     while ($true) {
         $cfg = Get-TaskConfig
-        $mf  = if (Test-Path $manifestFile) { try { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } catch { $null } } else { $null }
+        $mf  = Read-JsonFile $manifestFile
         $shuffleOn = $cfg -and $cfg.Shuffle
         $si        = if ($cfg -and $cfg.ShuffleInterval) { $cfg.ShuffleInterval } else { 15 }
         $hs        = if ($mf -and $mf.HistorySize) { $mf.HistorySize } else { 10 }
@@ -1325,7 +1353,7 @@ function Show-ShuffleMenu {
                 }
                 if ($null -ne $newHs) {
                     try {
-                        $mfEdit = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() } }
+                        $mfEdit = Read-JsonFile $manifestFile (New-ManifestObject)
                         $mfEdit.HistorySize = $newHs
                         if ($mfEdit.History -and @($mfEdit.History).Count -gt $newHs) {
                             $mfEdit.History = @($mfEdit.History | Select-Object -First $newHs)
@@ -1364,7 +1392,7 @@ function Show-ShuffleMenu {
                 }
                 if ($null -ne $newRi) {
                     try {
-                        $mfEdit = if (Test-Path $manifestFile) { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                        $mfEdit = Read-JsonFile $manifestFile
                         if ($mfEdit) {
                             if (-not $mfEdit.PSObject.Properties['RecalcInterval']) { $mfEdit | Add-Member -NotePropertyName RecalcInterval -NotePropertyValue $newRi -Force } else { $mfEdit.RecalcInterval = $newRi }
                             Save-JsonFile $mfEdit $manifestFile
@@ -1382,7 +1410,7 @@ function Show-ShuffleMenu {
 function Show-HistoryMenu {
     while ($true) {
         $cfg = Get-TaskConfig
-        $mf  = if (Test-Path $manifestFile) { try { try { Get-Content $manifestFile -Raw | ConvertFrom-Json } catch { $null } } catch { $null } } else { $null }
+        $mf  = Read-JsonFile $manifestFile
         $cuEnabled = if ($mf -and $mf.PSObject.Properties['CatchUpEnabled']) { [bool]$mf.CatchUpEnabled } else { $true }
         $cuDays    = if ($mf -and $mf.PSObject.Properties['CatchUpDays'] -and [int]$mf.CatchUpDays -gt 0) { [int]$mf.CatchUpDays } else { 7 }
         Clear-Host
@@ -1418,7 +1446,7 @@ function Show-HistoryMenu {
                     if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
                     Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
                 } | Out-Null
-                $script:cachedStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                Reload-CachedStats
             }
             Start-Sleep 1; return
         }
@@ -1462,7 +1490,7 @@ function Show-HistoryMenu {
                             if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
                             Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
                         } | Out-Null
-                        $script:cachedStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                        Reload-CachedStats
                     }
                     Start-Sleep 1; return
                 }
@@ -1479,7 +1507,7 @@ function Show-HistoryMenu {
                 if ($cfg -and $cfg.Resolution) { $psArgs += " -Resolution $($cfg.Resolution)" }
                 Start-Process powershell -ArgumentList $psArgs -Wait -WindowStyle Hidden
             } | Out-Null
-            $script:cachedStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+            Reload-CachedStats
             Write-Host ''
             if (Test-Path $logFile) {
                 Get-Content $logFile -Tail 3 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
@@ -1577,7 +1605,7 @@ function Show-CheckHoursMenu {
     }
 }
 
-$script:cachedStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+Reload-CachedStats
 Get-TaskConfig | Out-Null
 $spinnerPs.Stop()
 $spinnerPs.Dispose()
@@ -1629,6 +1657,19 @@ function Save-JsonFile($obj, $path, $depth = 3) {
     try { Move-Item $tmp $path -Force }
     catch { Remove-Item $tmp -EA SilentlyContinue; throw }
 }
+
+function Read-JsonFile($path, $default = $null) {
+    if (Test-Path $path) { try { Get-Content $path -Raw | ConvertFrom-Json } catch { $default } } else { $default }
+}
+
+function New-StatsObject {
+    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
+}
+
+function New-ManifestObject {
+    [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() }
+}
+
 
 try {
     if ($initSpinPs) { $initSpinPs.Stop(); $initSpinPs.Dispose(); $initSpinRs.Close(); $initSpinRs.Dispose(); [console]::Write("`r              `r") }
@@ -1801,89 +1842,4 @@ try {
         Write-InstallLog 'Check: BingWallpaper.ps1 exists ... NOT FOUND'
     }
 
-    $checks++
-    if (Test-Path $settingsPs1) {
-        Write-InstallLog 'Check: Settings.ps1 exists ... OK'; $passed++
-    } else {
-        Write-InstallLog 'Check: Settings.ps1 exists ... NOT FOUND'
-    }
-
-    $checks++
-    if (Test-Path $settingsBat) {
-        Write-InstallLog 'Check: Settings.bat exists ... OK'; $passed++
-    } else {
-        Write-InstallLog 'Check: Settings.bat exists ... NOT FOUND'
-    }
-
-    $checks++
-    $verifyTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($verifyTask) {
-        Write-InstallLog "Check: Scheduled task ($($verifyTask.State)) ... OK"; $passed++
-    } elseif (Test-Path $startupBatPath) {
-        Write-InstallLog 'Check: Scheduled task ... NOT FOUND (startup folder active)'; $passed++
-    } else {
-        Write-InstallLog 'Check: Autostart ... NOT CONFIGURED'
-    }
-
-    if ($verifyTask) {
-        $checks++
-        $vbsOk = (Test-Path $launcherPath) -and ((Get-Content $launcherPath -Raw) -match [regex]::Escape($scriptPath))
-        if ($vbsOk) {
-            Write-InstallLog 'Check: Launcher script path matches ... OK'; $passed++
-        } else {
-            Write-InstallLog 'Check: Launcher script path ... MISMATCH or launcher missing'
-        }
-    }
-
-    $s35Ps.Stop(); $s35Ps.Dispose(); $s35Rs.Close(); $s35Rs.Dispose()
-    [console]::Write("`r                             `r")
-    if ($passed -eq $checks) {
-        Write-InstallLog "Verification passed ($passed/$checks)"
-        Write-Host "Step 3.5: Verification passed ($passed/$checks)."
-    } else {
-        Write-InstallLog "Verification completed with warnings ($passed/$checks)"
-        Write-Host "Step 3.5: Verification warnings ($passed/$checks) - check the log." -ForegroundColor Yellow
-    }
-    Write-Host ""
-
-    $s4Rs = [runspacefactory]::CreateRunspace(); $s4Rs.Open()
-    $s4Ps = [powershell]::Create(); $s4Ps.Runspace = $s4Rs
-    $s4Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 4: Downloading wallpaper $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
-    $s4Ps.BeginInvoke() | Out-Null
-    Start-Sleep -Milliseconds 80
-    if ($setLockScreen) {
-        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -SetLockScreen -Install 6>$null } else { & $scriptPath -Market $Market -SetLockScreen -Install 6>$null }
-    } else {
-        if ($PSBoundParameters.ContainsKey('Resolution')) { & $scriptPath -Market $Market -Resolution $Resolution -Install 6>$null } else { & $scriptPath -Market $Market -Install 6>$null }
-    }
-    $s4Ps.Stop(); $s4Ps.Dispose(); $s4Rs.Close(); $s4Rs.Dispose()
-    [console]::Write("`r                                     `r")
-    $lastLog = if (Test-Path $logFile) { Get-Content $logFile | Select-Object -Last 1 } else { '' }
-    if ($lastLog -match 'Network unavailable at install time') {
-        Write-Host "Step 4: Network unavailable, will retry at logon." -ForegroundColor Yellow
-    } else {
-        $dlTitle = if ($lastLog -match '"([^"]+)"') { $Matches[1] } else { $null }
-        Write-Host "Step 4: Wallpaper set." -ForegroundColor Green
-        if ($dlTitle) { Write-Host "  $dlTitle" -ForegroundColor DarkGray }
-    }
-
-    if ($setLockScreen -and $setLockScreenTimeout -gt 0) {
-        try {
-            $secs = $setLockScreenTimeout * 60
-            powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO 8EC4B3A5-6868-48c2-BE75-4F3044BE88A7 $secs | Out-Null
-            powercfg /setactive SCHEME_CURRENT | Out-Null
-        } catch {}
-    }
-
-    Write-Host ""
-    Write-Host "  Installation successful!" -ForegroundColor Green
-    Write-Host ""
-    Read-Host "  Press Enter to close"
-
-} catch {
-    Write-Host ""
-    Write-Host "ERROR: $_" -ForegroundColor Red
-    Write-Host ""
-    Read-Host "  Press Enter to close"
-}
-                                          
+    $checks
