@@ -74,7 +74,7 @@ if (Test-Path $scriptPath) {
     $hasSettings    = Test-Path $settingsPs1
     $partialInstall = -not $hasAutostart -or -not $hasSettings
 
-    $initSpinPs.Stop(); $initSpinPs.Dispose(); $initSpinRs.Close(); $initSpinRs.Dispose()
+    $initSpinPs.Stop(); Start-Sleep -Milliseconds 50; $initSpinPs.Dispose(); $initSpinRs.Close(); $initSpinRs.Dispose()
     $initSpinPs = $null
     [console]::Write("`r              `r")
     Write-Host ''
@@ -155,6 +155,7 @@ $logDir        = Join-Path $installRoot 'Data'
 $statsFile     = Join-Path $installRoot 'Data\Stats.json'
 $manifestFile  = Join-Path $installRoot 'Data\Wallpapers.json'
 $updateFile    = Join-Path $installRoot 'Data\UpdateInfo.json'
+$historyFile   = Join-Path $installRoot 'Data\ShuffleHistory.json'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
@@ -229,7 +230,7 @@ if (-not $Install) {
     try {
         if ($CheckWindowStart -ne 0 -or $CheckWindowEnd -ne 0) {
             $currentHour = (Get-Date).Hour
-            if ($currentHour -lt $CheckWindowStart -or $currentHour -ge $CheckWindowEnd) { exit }
+            if ($currentHour -lt $CheckWindowStart -or $currentHour -gt $CheckWindowEnd) { exit }
         }
         $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
@@ -392,7 +393,10 @@ try {
             $allJpgs = @(Get-ChildItem (Join-Path $installRoot 'Wallpapers') -Recurse -Include '*.jpg','*.jpeg','*.png','*.bmp' -EA SilentlyContinue | Select-Object -ExpandProperty FullName)
             if ($allJpgs.Count -gt 0) {
                 $histSize = if ($mf -and $mf.HistorySize) { $mf.HistorySize } else { 10 }
-                $history  = @(if ($mf -and $mf.History) { $mf.History } else { @() })
+                $histData = if (Test-Path $historyFile) { try { Get-Content $historyFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+                # Migrate legacy history from Wallpapers.json on first run
+                if (-not $histData -and $mf -and $mf.History) { $histData = [PSCustomObject]@{ History = $mf.History } }
+                $history  = @(if ($histData -and $histData.History) { $histData.History } else { @() })
                 $history  = @($history | Where-Object { $_ -lt $allJpgs.Count })
                 $maxHist  = [math]::Max(0, [math]::Min($histSize, $allJpgs.Count - 1))
                 $history  = @($history | Select-Object -First $maxHist)
@@ -402,9 +406,7 @@ try {
                 if (Test-Path $shuffleFile) {
                     [WallpaperHelper]::SetOnAllMonitors($shuffleFile) | Out-Null
                     Write-Log "Shuffle | $($idx + 1)/$($allJpgs.Count) | `"$(Split-Path $shuffleFile -Leaf)`""
-                    if (-not $mf) { $mf = [PSCustomObject]@{ HistorySize = 10; History = @(); RecalcInterval = 7; LastRecalc = '' } }
-                    $mf.History = @(@($idx) + $history | Select-Object -First $histSize)
-                    Save-JsonFile $mf $manifestFile
+                    Save-JsonFile ([PSCustomObject]@{ History = @(@($idx) + $history | Select-Object -First $histSize) }) $historyFile
                     try {
                         $sStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
                         if ($sStats) {
@@ -514,7 +516,7 @@ function Invoke-WithSpinner {
     try {
         $result = & $Action
     } finally {
-        $ps.Stop(); $ps.Dispose(); $rs.Close(); $rs.Dispose()
+        $ps.Stop(); Start-Sleep -Milliseconds 50; $ps.Dispose(); $rs.Close(); $rs.Dispose()
         [console]::Write("`r" + (' ' * ($Label.Length + 12)) + "`r")
     }
     return $result
@@ -991,21 +993,27 @@ function Invoke-Uninstall {
     elseif ($deleteLog -eq 'Y')   { Write-Host '  Deleted: "Run.log".' -ForegroundColor Green }
     elseif ($deleteStats -eq 'Y') { Write-Host '  Deleted: "Stats.json".' -ForegroundColor Green }
     Write-Host '  This window will close shortly.' -ForegroundColor Green
-    $batPath     = Join-Path $InstallDir 'Settings.bat'
-    $scriptsPath = Join-Path $InstallDir 'Scripts'
-    $dataPath    = Join-Path $InstallDir 'Data'
-    $logPath     = Join-Path $dataPath 'Run.log'
-    $statsPath   = Join-Path $dataPath 'Stats.json'
+    $batPath      = Join-Path $InstallDir 'Settings.bat'
+    $scriptsPath  = Join-Path $InstallDir 'Scripts'
+    $dataPath     = Join-Path $InstallDir 'Data'
+    $logPath      = Join-Path $dataPath 'Run.log'
+    $statsPath    = Join-Path $dataPath 'Stats.json'
     $manifestPath = Join-Path $dataPath 'Wallpapers.json'
     $updatePath   = Join-Path $dataPath 'UpdateInfo.json'
-    $cleanupCmd  = "/c timeout /t 3 /nobreak >nul & del /f /q `"$batPath`" & rmdir /s /q `"$scriptsPath`""
-    if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { $cleanupCmd += " & rmdir /s /q `"$dataPath`"" }
+    $historyPath  = Join-Path $dataPath 'ShuffleHistory.json'
+    $tmpBat = Join-Path $env:TEMP 'bws_cleanup.bat'
+    $cmds = @("timeout /t 3 /nobreak >nul", "del /f /q `"$batPath`"", "rmdir /s /q `"$scriptsPath`"")
+    if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { $cmds += "rmdir /s /q `"$dataPath`"" }
     else {
-        if ($deleteLog -eq 'Y')   { $cleanupCmd += " & del /f /q `"$logPath`"" }
-        if ($deleteStats -eq 'Y') { $cleanupCmd += " & del /f /q `"$statsPath`"" }
-        $cleanupCmd += " & del /f /q `"$manifestPath`" & del /f /q `"$updatePath`""
+        if ($deleteLog -eq 'Y')   { $cmds += "del /f /q `"$logPath`"" }
+        if ($deleteStats -eq 'Y') { $cmds += "del /f /q `"$statsPath`"" }
+        $cmds += "del /f /q `"$manifestPath`""
+        $cmds += "del /f /q `"$updatePath`""
+        $cmds += "del /f /q `"$historyPath`""
     }
-    Start-Process cmd -ArgumentList $cleanupCmd -WindowStyle Hidden
+    $cmds += "del /f /q `"$tmpBat`""
+    Set-Content $tmpBat -Value ($cmds -join "`r`n") -Encoding ASCII
+    Start-Process cmd -ArgumentList "/c `"$tmpBat`"" -WindowStyle Hidden
     Start-Sleep 3
     exit
 }
@@ -1627,7 +1635,7 @@ try {
     }
     if ($overwriteData) { Clear-Content $logFile -ErrorAction SilentlyContinue }
     "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] [INSTALL] Installation started" | Add-Content $logFile -Encoding UTF8
-    $s1Ps.Stop(); $s1Ps.Dispose(); $s1Rs.Close(); $s1Rs.Dispose()
+    $s1Ps.Stop(); Start-Sleep -Milliseconds 50; $s1Ps.Dispose(); $s1Rs.Close(); $s1Rs.Dispose()
     [console]::Write("`r                                `r")
     Write-Host "Step 1: Folders ready."
 
@@ -1639,7 +1647,7 @@ try {
     Set-Content -Path $scriptPath   -Value $wallpaperScript    -Encoding UTF8  -ErrorAction Stop
     Set-Content -Path $settingsBat  -Value $settingsBatContent -Encoding ASCII -ErrorAction Stop
     Set-Content -Path $settingsPs1  -Value $settingsPs1Content -Encoding UTF8  -ErrorAction Stop
-    $s2Ps.Stop(); $s2Ps.Dispose(); $s2Rs.Close(); $s2Rs.Dispose()
+    $s2Ps.Stop(); Start-Sleep -Milliseconds 50; $s2Ps.Dispose(); $s2Rs.Close(); $s2Rs.Dispose()
     [console]::Write("`r                             `r")
     Write-Host "Step 2: Scripts written."
 
@@ -1694,12 +1702,12 @@ try {
         } else {
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -ErrorAction Stop | Out-Null
         }
-        $instSpinPs.Stop(); $instSpinPs.Dispose(); $instSpinRs.Close(); $instSpinRs.Dispose()
+        $instSpinPs.Stop(); Start-Sleep -Milliseconds 50; $instSpinPs.Dispose(); $instSpinRs.Close(); $instSpinRs.Dispose()
         [console]::Write("`r                                              `r")
         Write-Host "Step 3: Autostart registered."
         $taskDone = $true
     } catch {
-        $instSpinPs.Stop(); $instSpinPs.Dispose(); $instSpinRs.Close(); $instSpinRs.Dispose()
+        $instSpinPs.Stop(); Start-Sleep -Milliseconds 50; $instSpinPs.Dispose(); $instSpinRs.Close(); $instSpinRs.Dispose()
         [console]::Write("`r                                              `r")
         Write-Host "Step 3: Scheduled task blocked - using startup folder instead."
     }
