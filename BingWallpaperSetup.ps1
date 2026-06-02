@@ -189,21 +189,23 @@ if (!(Test-Path $logDir)) {
 }
 $log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
-    $line = "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg"
-    [System.IO.File]::AppendAllText($log, "$line`r`n", [System.Text.Encoding]::UTF8)
-    if ($LogCap -ne '0' -and (Test-Path $log)) {
-        if ($LogCap -match '^(\d+)KB$') {
-            $maxBytes = [int]$Matches[1] * 1024
-            if ((Get-Item $log).Length -gt ($maxBytes * 1.2)) {
+    try {
+        $line = "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg"
+        [System.IO.File]::AppendAllText($log, "$line`r`n", [System.Text.Encoding]::UTF8)
+        if ($LogCap -ne '0' -and (Test-Path $log)) {
+            if ($LogCap -match '^(\d+)KB$') {
+                $maxBytes = [int]$Matches[1] * 1024
+                if ((Get-Item $log).Length -gt ($maxBytes * 1.2)) {
+                    $lines = Get-Content $log
+                    $lines | Select-Object -Last ([math]::Floor($lines.Count * 0.8)) | Set-Content $log -Encoding UTF8
+                }
+            } elseif ($LogCap -match '^(\d+)R$') {
+                $maxRows = [int]$Matches[1]
                 $lines = Get-Content $log
-                $lines | Select-Object -Last ([math]::Floor($lines.Count * 0.8)) | Set-Content $log -Encoding UTF8
+                if ($lines.Count -gt [math]::Floor($maxRows * 1.2)) { $lines | Select-Object -Last $maxRows | Set-Content $log -Encoding UTF8 }
             }
-        } elseif ($LogCap -match '^(\d+)R$') {
-            $maxRows = [int]$Matches[1]
-            $lines = Get-Content $log
-            if ($lines.Count -gt [math]::Floor($maxRows * 1.2)) { $lines | Select-Object -Last $maxRows | Set-Content $log -Encoding UTF8 }
         }
-    }
+    } catch {}
 }
 
 function Save-JsonFile($obj, $path, $depth = 3) {
@@ -225,6 +227,7 @@ function Invoke-HistoryCatchUp {
             $hApi = Invoke-RestMethod "https://www.bing.com/HPImageArchive.aspx?format=js&idx=$i&n=1&mkt=$Mkt" -TimeoutSec 30 -ErrorAction Stop
             $hImg = $hApi.images[0]
             if (!$hImg -or !$hImg.urlbase -or !$hImg.startdate) { continue }
+            if ($hImg.urlbase -notmatch '^/th\?id=') { continue }
             $hYear  = $hImg.startdate.Substring(0, 4)
             $hMonth = $hImg.startdate.Substring(4, 2)
             $hDay   = $hImg.startdate.Substring(6, 2)
@@ -239,7 +242,9 @@ function Invoke-HistoryCatchUp {
             $hFileTmp = "$hFile.tmp"
             Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFileTmp -TimeoutSec 30 -ErrorAction Stop
             if ((Get-Item $hFileTmp).Length -eq 0) { Remove-Item $hFileTmp; continue }
-            Move-Item $hFileTmp $hFile -Force
+            $hMagic = [System.IO.File]::ReadAllBytes($hFileTmp)[0..2]
+            if ($hMagic[0] -ne 0xFF -or $hMagic[1] -ne 0xD8 -or $hMagic[2] -ne 0xFF) { Remove-Item $hFileTmp; continue }
+            try { Move-Item $hFileTmp $hFile -Force } catch { Remove-Item $hFileTmp -EA SilentlyContinue; throw }
             Write-Log "History: downloaded ${hDate}_${hName}_${hRes}.jpg"
             $added++
             try {
@@ -251,7 +256,10 @@ function Invoke-HistoryCatchUp {
                     Save-JsonFile $hmf $manifestFile
                 }
             } catch {}
-        } catch { Write-Log "History: error on idx=$i - $_" }
+        } catch {
+            if ($hFileTmp -and (Test-Path $hFileTmp)) { Remove-Item $hFileTmp -EA SilentlyContinue }
+            Write-Log "History: error on idx=$i - $_"
+        }
     }
     if ($added -gt 0) { Write-Log "History: $added wallpaper(s) added to library" }
 }
@@ -313,6 +321,7 @@ if ($Install) {
 
 $img  = $api.images[0]
 if (!$img -or !$img.urlbase -or !$img.startdate) { Write-Log 'Skipped | Bing returned a malformed response'; exit }
+if ($img.urlbase -notmatch '^/th\?id=') { Write-Log 'Skipped | Bing returned an unexpected urlbase'; exit }
 
 $year  = $img.startdate.Substring(0, 4)
 $month = $img.startdate.Substring(4, 2)
@@ -333,6 +342,8 @@ try {
         $fileTmp = "$file.tmp"
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
         if ((Get-Item $fileTmp).Length -eq 0) { Remove-Item $fileTmp; Write-Log 'Error | Downloaded file is empty'; exit }
+        $magic = [System.IO.File]::ReadAllBytes($fileTmp)[0..2]
+        if ($magic[0] -ne 0xFF -or $magic[1] -ne 0xD8 -or $magic[2] -ne 0xFF) { Remove-Item $fileTmp; Write-Log 'Error | Downloaded file is not a valid JPEG'; exit }
         Move-Item $fileTmp $file -Force
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
         $set = [WallpaperHelper]::SetOnAllMonitors($file)
@@ -1041,7 +1052,7 @@ function Invoke-Uninstall {
     $manifestPath = Join-Path $dataPath 'Wallpapers.json'
     $updatePath   = Join-Path $dataPath 'UpdateInfo.json'
     $historyPath  = Join-Path $dataPath 'ShuffleHistory.json'
-    $tmpBat = Join-Path $env:TEMP 'bws_cleanup.bat'
+    $tmpBat = Join-Path $env:TEMP "bws_cleanup_$([System.IO.Path]::GetRandomFileName() -replace '\..*').bat"
     $cmds = @("timeout /t 3 /nobreak >nul", "del /f /q `"$batPath`"", "rmdir /s /q `"$scriptsPath`"")
     if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { $cmds += "rmdir /s /q `"$dataPath`"" }
     else {
@@ -1575,25 +1586,32 @@ $spinnerRs.Dispose()
 [console]::Write("`r              `r")
 
 # Main loop
-while ($true) {
-    Show-Status
-    $choice = (Read-Host '  Choice').Trim().ToUpper()
-    switch ($choice) {
-        'L' { Show-LockScreenMenu }
-        'M' { Show-MarketMenu }
-        'R' { Show-ResolutionMenu }
-        'W' { Run-Now }
-        'G' { Show-LogCapMenu }
-        'C' { Invoke-Recalculate }
-        'I' { Show-CheckIntervalMenu }
-        'O' { Show-CheckHoursMenu }
-        'S' { Show-ShuffleMenu }
-        'H' { Show-HistoryMenu }
-        'V' { Show-Log }
-        'T' { Try-ScheduledTask }
-        'U' { Invoke-Uninstall }
-        'X' { exit }
+try {
+    while ($true) {
+        Show-Status
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        switch ($choice) {
+            'L' { Show-LockScreenMenu }
+            'M' { Show-MarketMenu }
+            'R' { Show-ResolutionMenu }
+            'W' { Run-Now }
+            'G' { Show-LogCapMenu }
+            'C' { Invoke-Recalculate }
+            'I' { Show-CheckIntervalMenu }
+            'O' { Show-CheckHoursMenu }
+            'S' { Show-ShuffleMenu }
+            'H' { Show-HistoryMenu }
+            'V' { Show-Log }
+            'T' { Try-ScheduledTask }
+            'U' { Invoke-Uninstall }
+            'X' { exit }
+        }
     }
+} catch {
+    Write-Host ""
+    Write-Host "  Unexpected error: $_" -ForegroundColor Red
+    Write-Host "  Press Enter to close." -ForegroundColor DarkGray
+    Read-Host | Out-Null
 }
 '@
 
