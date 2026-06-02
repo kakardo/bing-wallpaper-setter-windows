@@ -147,7 +147,34 @@ if (!$Resolution) {
     $Resolution = if ($w -ge 3840) { '3840x2160' } elseif ($w -ge 1920) { '1920x1080' } else { '1366x768' }
 }
 
-$wpCode = 'using System; using System.Runtime.InteropServices; [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IDesktopWallpaper { void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); [return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); [return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); [return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); void SetBackgroundColor(uint color); uint GetBackgroundColor(); void SetPosition(int position); int GetPosition(); void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); void SetSlideshowOptions(uint options, uint slideshowTick); void GetSlideshowOptions(out uint options, out uint slideshowTick); void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); int GetStatus(); bool Enable(bool enable); } [ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] public class DesktopWallpaperClass {} [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } public static class WallpaperHelper { public static int SetOnAllMonitors(string path) { try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); uint count = dw.GetMonitorDevicePathCount(); int active = 0; for (uint i = 0; i < count; i++) { try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); if (r.right - r.left > 0 && r.bottom - r.top > 0) { dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } } catch { } } return active; } catch { return 0; } } }'
+$wpCode = 'using System; using System.Runtime.InteropServices; ' +
+    '[ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] ' +
+    'public interface IDesktopWallpaper { ' +
+        'void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); ' +
+        '[return: MarshalAs(UnmanagedType.LPWStr)] string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID); ' +
+        '[return: MarshalAs(UnmanagedType.LPWStr)] string GetMonitorDevicePathAt(uint monitorIndex); ' +
+        '[return: MarshalAs(UnmanagedType.U4)] uint GetMonitorDevicePathCount(); ' +
+        'void GetMonitorRECT([MarshalAs(UnmanagedType.LPWStr)] string monitorID, out RECT displayRect); ' +
+        'void SetBackgroundColor(uint color); uint GetBackgroundColor(); ' +
+        'void SetPosition(int position); int GetPosition(); ' +
+        'void SetSlideshow(IntPtr items); IntPtr GetSlideshow(); ' +
+        'void SetSlideshowOptions(uint options, uint slideshowTick); ' +
+        'void GetSlideshowOptions(out uint options, out uint slideshowTick); ' +
+        'void AdvanceSlideshow([MarshalAs(UnmanagedType.LPWStr)] string monitorID, int direction); ' +
+        'int GetStatus(); bool Enable(bool enable); } ' +
+    '[ComImport, Guid("C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD"), ClassInterface(ClassInterfaceType.None)] ' +
+    'public class DesktopWallpaperClass {} ' +
+    '[StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; } ' +
+    'public static class WallpaperHelper { ' +
+        'public static int SetOnAllMonitors(string path) { ' +
+            'try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); ' +
+            'uint count = dw.GetMonitorDevicePathCount(); int active = 0; ' +
+            'for (uint i = 0; i < count; i++) { ' +
+                'try { RECT r; dw.GetMonitorRECT(dw.GetMonitorDevicePathAt(i), out r); ' +
+                'if (r.right - r.left > 0 && r.bottom - r.top > 0) { ' +
+                    'dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } ' +
+                '} catch { } } ' +
+            'return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
 $installRoot   = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
@@ -156,7 +183,10 @@ $statsFile     = Join-Path $installRoot 'Data\Stats.json'
 $manifestFile  = Join-Path $installRoot 'Data\Wallpapers.json'
 $updateFile    = Join-Path $installRoot 'Data\UpdateInfo.json'
 $historyFile   = Join-Path $installRoot 'Data\ShuffleHistory.json'
-if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+if (!(Test-Path $logDir)) {
+    try { New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null }
+    catch { $logDir = $env:TEMP }
+}
 $log = Join-Path $logDir 'Run.log'
 function Write-Log($msg) {
     $line = "[$([datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] ${logPrefix}$msg"
@@ -183,7 +213,7 @@ function Save-JsonFile($obj, $path, $depth = 3) {
 }
 
 if ($Resolution -notin '1920x1080','1366x768','3840x2160') {
-    Write-Log "Error: unsupported resolution '$Resolution'"; exit
+    Write-Log "Error | Unsupported resolution '$Resolution'"; exit
 }
 
 function Invoke-HistoryCatchUp {
@@ -232,7 +262,7 @@ if (-not $Install) {
             $currentHour = (Get-Date).Hour
             if ($currentHour -lt $CheckWindowStart -or $currentHour -gt $CheckWindowEnd) { exit }
         }
-        $earlyStats = if (Test-Path $statsFile) { Get-Content $statsFile -Raw | ConvertFrom-Json } else { $null }
+        $earlyStats = if (Test-Path $statsFile) { try { Get-Content $statsFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
         $monitorsChanged = $false
         $currentFingerprint = ''
@@ -301,12 +331,12 @@ try {
         if (!$Install) { Write-Log 'Started' }
         $fileTmp = "$file.tmp"
         Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
-        if ((Get-Item $fileTmp).Length -eq 0) { Remove-Item $fileTmp; Write-Log 'Error: downloaded file is empty'; exit }
+        if ((Get-Item $fileTmp).Length -eq 0) { Remove-Item $fileTmp; Write-Log 'Error | Downloaded file is empty'; exit }
         Move-Item $fileTmp $file -Force
         Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
         $set = [WallpaperHelper]::SetOnAllMonitors($file)
         if ($set -eq 0) {
-            Write-Log 'Error: wallpaper set failed on all monitors'
+            Write-Log 'Error | Wallpaper set failed on all monitors'
             Write-Host "Warning: could not set wallpaper on any monitor."
         } else {
             $title = if ($img.title) { $img.title } else { 'Untitled' }
@@ -340,7 +370,15 @@ try {
                 $mfCu      = if (Test-Path $manifestFile) { Get-Content $manifestFile -Raw | ConvertFrom-Json } else { $null }
                 $cuEnabled = if ($mfCu -and $mfCu.PSObject.Properties['CatchUpEnabled']) { [bool]$mfCu.CatchUpEnabled } else { $true }
                 $cuDays    = if ($mfCu -and $mfCu.PSObject.Properties['CatchUpDays'] -and [int]$mfCu.CatchUpDays -gt 0) { [int]$mfCu.CatchUpDays } else { 7 }
-                if ($cuEnabled) { Invoke-HistoryCatchUp -Days $cuDays -Mkt $Market -Res $Resolution }
+                $lastCatchUp = if ($mfCu -and $mfCu.PSObject.Properties['LastCatchUp']) { $mfCu.LastCatchUp } else { '' }
+                $today = (Get-Date).ToString('yyyy-MM-dd')
+                if ($cuEnabled -and $lastCatchUp -ne $today) {
+                    Invoke-HistoryCatchUp -Days $cuDays -Mkt $Market -Res $Resolution
+                    if ($mfCu) {
+                        if (-not $mfCu.PSObject.Properties['LastCatchUp']) { $mfCu | Add-Member -NotePropertyName LastCatchUp -NotePropertyValue $today -Force } else { $mfCu.LastCatchUp = $today }
+                        Save-JsonFile $mfCu $manifestFile
+                    }
+                }
             } catch {}
         }
     } else {
@@ -372,7 +410,7 @@ try {
             Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $file
             Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
         } catch {
-            Write-Log "Error: lock screen update failed - $_"
+            Write-Log "Error | Lock screen update failed - $_"
             Write-Host "Warning: could not set lock screen: $_"
         }
     } elseif ($isNew -and !$SetLockScreen) {
@@ -433,7 +471,7 @@ try {
     }
     if ($Install) { Write-Log 'Installation complete' }
 } catch {
-    Write-Log "Error: $_"
+    Write-Log "Error | $_"
     if (Test-Path $file) { Remove-Item $file }
     exit
 }
