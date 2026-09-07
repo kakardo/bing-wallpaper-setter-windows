@@ -74,7 +74,9 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 - History catch-up that automatically downloads the last 7 days of Bing wallpapers whenever a new image is added, so days missed while your PC was off are filled in. Configurable or can be turned off entirely via Settings.
 - `Settings.bat` for management and uninstall.
 
-> **Multi-monitor:** Desktop wallpaper is set on all displays. Lock screen only updates on the primary monitor (Windows does not support per-monitor lock screens).
+> **Multi-monitor:** Desktop wallpaper is set on all displays. With resolution on Auto-detect, the image is downloaded at the size needed by the largest connected monitor and used on all of them, so nothing is upscaled. If the monitors change (for example a docking station at home versus at work) the resolution is re-evaluated at the next check and a larger image is fetched if needed. Lock screen only updates on the primary monitor (Windows does not support per-monitor lock screens).
+>
+> **Fallback:** if Bing does not offer the image at the chosen resolution, the next larger size is tried, then smaller sizes, so a wallpaper is always set. Failures are written to the log.
 
 ### 2b. Shuffle mode
 
@@ -182,7 +184,7 @@ Market and resolution changes take effect at the next logon or hourly check, or 
 | Parameter | Default | Options |
 |-----------|---------|---------|
 | `-Market` | `en-US` | Any Bing market code, e.g. `en-GB`, `nb-NO` |
-| `-Resolution` | Auto-detect | `1920x1080`, `1366x768`, `3840x2160` |
+| `-Resolution` | Auto-detect (largest connected monitor) | `1920x1080`, `1366x768`, `3840x2160` |
 
 Example:
 ```powershell

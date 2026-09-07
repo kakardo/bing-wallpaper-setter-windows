@@ -143,12 +143,9 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 # Always load Forms: the monitor fingerprint below needs it even when a fixed resolution is configured
 try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop } catch {}
-if (!$Resolution) {
-    $w = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
-    $Resolution = if ($w -ge 3840) { '3840x2160' } elseif ($w -ge 1920) { '1920x1080' } else { '1366x768' }
-}
 
 $wpCode = 'using System; using System.Runtime.InteropServices; ' +
+    'public static class DpiHelper { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); } ' +
     '[ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] ' +
     'public interface IDesktopWallpaper { ' +
         'void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper); ' +
@@ -177,6 +174,25 @@ $wpCode = 'using System; using System.Runtime.InteropServices; ' +
                 '} catch { } } ' +
             'return active; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
+
+# Without this, Screen.Bounds reports scaled sizes (a 4K monitor at 150% shows as 2560 wide)
+try { [DpiHelper]::SetProcessDPIAware() | Out-Null } catch {}
+
+$supportedResolutions = @('1366x768', '1920x1080', '3840x2160')   # ascending
+
+# Auto-detect: pick the resolution needed by the largest connected monitor, so one image
+# looks sharp everywhere. Downscaling is free; upscaling is not.
+if (!$Resolution) {
+    $maxDim = 0
+    try {
+        foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+            $d = [math]::Max($s.Bounds.Width, $s.Bounds.Height)
+            if ($d -gt $maxDim) { $maxDim = $d }
+        }
+    } catch {}
+    if ($maxDim -eq 0) { try { $maxDim = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width } catch { $maxDim = 1920 } }
+    $Resolution = if ($maxDim -ge 3840) { '3840x2160' } elseif ($maxDim -ge 1920) { '1920x1080' } else { '1366x768' }
+}
 
 $installRoot   = Split-Path (Split-Path $MyInvocation.MyCommand.Path)
 $logDir        = Join-Path $installRoot 'Data'
@@ -221,7 +237,7 @@ function Read-JsonFile($path, $default = $null) {
 }
 
 function New-StatsObject {
-    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
+    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = ''; Requested = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
 }
 
 function New-ManifestObject {
@@ -300,15 +316,22 @@ if (-not $Install) {
         $earlyStats = Read-JsonFile $statsFile
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
         $monitorsChanged = $false
+        $resolutionChanged = $false
         $currentFingerprint = ''
         try {
             $currentFingerprint = ([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y } | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)+$($_.Bounds.X)+$($_.Bounds.Y)" }) -join '|'
             if ($todayDone) {
                 $storedFingerprint = if ($earlyStats.PSObject.Properties['MonitorFingerprint']) { $earlyStats.MonitorFingerprint } else { '' }
                 if ($currentFingerprint -ne $storedFingerprint) { $monitorsChanged = $true }
+                # Resolution last asked for (not necessarily the one Bing had). Falls back to the filename for stats written by older versions.
+                $ld = $earlyStats.LastDownloaded
+                $storedRes = if ($ld.PSObject.Properties['Requested'] -and $ld.Requested) { $ld.Requested }
+                             elseif ($ld.Path -and $ld.Path -match '_(\d+x\d+)\.jpg$') { $Matches[1] }
+                             else { '' }
+                if ($storedRes -and $storedRes -ne $Resolution) { $resolutionChanged = $true }
             }
         } catch {}
-        if ($todayDone -and -not $Shuffle -and -not $monitorsChanged -and -not $CatchUpOnly) { exit }
+        if ($todayDone -and -not $Shuffle -and -not $monitorsChanged -and -not $resolutionChanged -and -not $CatchUpOnly) { exit }
     } catch {}
 }
 
@@ -359,19 +382,46 @@ if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Nu
 $nameRaw = ($img.title -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim(' .')
 $name = if ($nameRaw) { $nameRaw.Substring(0, [math]::Min(80, $nameRaw.Length)) } else { 'Bing' }
 $date = "$year-$month-$day"
-$file = "$dir\${date}_${name}_${Resolution}.jpg"
+
+# Try the wanted resolution first, then higher ones (downscaling is harmless), then lower ones.
+# A file already on disk at any step counts as success without a download.
+$wantedIdx = [array]::IndexOf($supportedResolutions, $Resolution)
+$resChain  = @($Resolution)
+for ($ri = $wantedIdx + 1; $ri -lt $supportedResolutions.Count; $ri++) { $resChain += $supportedResolutions[$ri] }
+for ($ri = $wantedIdx - 1; $ri -ge 0; $ri--) { $resChain += $supportedResolutions[$ri] }
+
+$file = $null; $actualRes = $null; $downloaded = $false; $fileTmp = $null; $startedLogged = $false
+$lastApplied = try { (Read-JsonFile $statsFile).LastDownloaded.Path } catch { $null }
 
 try {
-    $isNew = !(Test-Path $file)
+    foreach ($res in $resChain) {
+        $candidate = "$dir\${date}_${name}_${res}.jpg"
+        if (Test-Path $candidate) { $file = $candidate; $actualRes = $res; break }
+        if (!$Install -and !$startedLogged) { Write-Log 'Started'; $startedLogged = $true }
+        $fileTmp = "$candidate.tmp"
+        try {
+            Invoke-WebRequest "https://www.bing.com$($img.urlbase)_${res}.jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
+            if ((Get-Item $fileTmp).Length -eq 0) { throw 'downloaded file is empty' }
+            $magic = [System.IO.File]::ReadAllBytes($fileTmp)[0..2]
+            if ($magic[0] -ne 0xFF -or $magic[1] -ne 0xD8 -or $magic[2] -ne 0xFF) { throw 'downloaded file is not a valid JPEG' }
+            Move-Item $fileTmp $candidate -Force
+            $file = $candidate; $actualRes = $res; $downloaded = $true
+            Write-Log "Downloaded: ${date}_${name}_${res}.jpg"
+            break
+        } catch {
+            if (Test-Path $fileTmp) { Remove-Item $fileTmp -EA SilentlyContinue }
+            Write-Log "Error | Download failed at $res - $_"
+        }
+    }
+    $fileTmp = $null
+    if (!$file) { Write-Log "Error | No resolution available for today's image, tried: $($resChain -join ', ')"; exit }
+    if ($actualRes -ne $Resolution) { Write-Log "Requested $Resolution not available, using $actualRes" }
+
+    # Apply when something was downloaded, or when the file to use differs from the one last applied
+    # (resolution or monitor change picked a different file that already existed on disk).
+    $isNew = $downloaded -or ($file -ne $lastApplied)
     if ($isNew) {
-        if (!$Install) { Write-Log 'Started' }
-        $fileTmp = "$file.tmp"
-        Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$Resolution.jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
-        if ((Get-Item $fileTmp).Length -eq 0) { Remove-Item $fileTmp; Write-Log 'Error | Downloaded file is empty'; exit }
-        $magic = [System.IO.File]::ReadAllBytes($fileTmp)[0..2]
-        if ($magic[0] -ne 0xFF -or $magic[1] -ne 0xD8 -or $magic[2] -ne 0xFF) { Remove-Item $fileTmp; Write-Log 'Error | Downloaded file is not a valid JPEG'; exit }
-        Move-Item $fileTmp $file -Force
-        Write-Log "Downloaded: ${date}_${name}_${Resolution}.jpg"
+        if (!$downloaded) { Write-Log "Switching to existing file: ${date}_${name}_${actualRes}.jpg" }
         $set = [WallpaperHelper]::SetOnAllMonitors($file)
         if ($set -eq 0) {
             Write-Log 'Error | Wallpaper set failed on all monitors'
@@ -387,8 +437,8 @@ try {
                 $stats.TimesRun++
                 if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
                 $stats.LastRun      = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
-                $stats.WallpaperCount++
-                $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss'); Path = $file }
+                if ($downloaded) { $stats.WallpaperCount++ }
+                $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss'); Path = $file; Requested = $Resolution }
                 $stats.Version          = $scriptVersion
                 $stats.MonitorFingerprint = $currentFingerprint
                 Save-JsonFile $stats $statsFile
@@ -441,6 +491,11 @@ try {
             $stats.LastRun  = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
             $stats.Version  = $scriptVersion
             if ($monitorsChanged) { $stats.MonitorFingerprint = $currentFingerprint }
+            # Remember what was asked for, so an unavailable resolution is not retried every hour
+            if ($stats.LastDownloaded) {
+                if ($stats.LastDownloaded.PSObject.Properties['Requested']) { $stats.LastDownloaded.Requested = $Resolution }
+                else { $stats.LastDownloaded | Add-Member -NotePropertyName Requested -NotePropertyValue $Resolution -Force }
+            }
             Save-JsonFile $stats $statsFile
         } catch {}
     }
@@ -510,7 +565,7 @@ try {
     if ($Install) { Write-Log 'Installation complete' }
 } catch {
     Write-Log "Error | $_"
-    if (Test-Path $file) { Remove-Item $file -EA SilentlyContinue }
+    if ($downloaded -and $file -and (Test-Path $file)) { Remove-Item $file -EA SilentlyContinue }
     if ($fileTmp -and (Test-Path $fileTmp)) { Remove-Item $fileTmp -EA SilentlyContinue }
     exit
 }
@@ -611,7 +666,7 @@ function Read-JsonFile($path, $default = $null) {
 }
 
 function New-StatsObject {
-    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
+    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = ''; Requested = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
 }
 
 function New-ManifestObject {
@@ -1008,10 +1063,12 @@ function Show-ResolutionMenu {
         Write-Host ('  ' + ([string][char]0x2500 * 36)) -ForegroundColor DarkGray
         Write-Host "  Current: $current"
         Write-Host ''
-        Write-Host '  [1] Auto-detect'
+        Write-Host '  [1] Auto-detect  (matches the largest connected monitor)'
         Write-Host '  [2] 1920x1080  (Full HD)'
         Write-Host '  [3] 3840x2160  (4K)'
         Write-Host '  [4] 1366x768   (HD)'
+        Write-Host ''
+        Write-Host '  If Bing has no image at the chosen size, the next larger size is used, then smaller.' -ForegroundColor DarkGray
         Write-Host ''
         Write-Host '  [B] Back' -ForegroundColor DarkGray
         Write-Host ''
@@ -1678,7 +1735,7 @@ function Read-JsonFile($path, $default = $null) {
 }
 
 function New-StatsObject {
-    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
+    [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = ''; LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = ''; Requested = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' }
 }
 
 function New-ManifestObject {
@@ -1703,10 +1760,10 @@ try {
     if (!(Test-Path $wallpapersDir)) { New-Item -ItemType Directory -Path $wallpapersDir -Force -ErrorAction Stop | Out-Null }
     $statsPath = Join-Path $logsDir 'Stats.json'
     if ($overwriteData -or !(Test-Path $statsPath)) {
-        Save-JsonFile ([PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = $installerVersion; MonitorFingerprint = '' }) $statsPath
+        Save-JsonFile ([PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = ''; Requested = '' }; TimesShuffled = 0; Version = $installerVersion; MonitorFingerprint = '' }) $statsPath
     } else {
         $existing = try { Get-Content $statsPath -Raw | ConvertFrom-Json } catch { $null }
-        if (-not $existing) { $existing = [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
+        if (-not $existing) { $existing = [PSCustomObject]@{ TimesRun = 0; WallpapersSet = 0; FirstRun = (Get-Date).ToString('yyyy-MM-dd'); LastRun = [PSCustomObject]@{ Date = ''; Time = '' }; WallpaperCount = 0; LastDownloaded = [PSCustomObject]@{ Title = ''; Date = ''; Time = ''; Path = ''; Requested = '' }; TimesShuffled = 0; Version = ''; MonitorFingerprint = '' } }
         if ($null -eq $existing.TimesRun)      { $existing | Add-Member -NotePropertyName TimesRun      -NotePropertyValue 0                                                      -Force }
         if ($null -eq $existing.WallpapersSet) { $existing | Add-Member -NotePropertyName WallpapersSet -NotePropertyValue 0                                                      -Force }
         if (-not $existing.FirstRun)           { $existing | Add-Member -NotePropertyName FirstRun      -NotePropertyValue (Get-Date).ToString('yyyy-MM-dd')                      -Force }
