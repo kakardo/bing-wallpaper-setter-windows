@@ -108,10 +108,63 @@ if (Test-Path $scriptPath) {
         elseif ($raw -in $noValues)              { $overwriteData = $true }
         else { Write-Host '  Please enter yes or no.' -ForegroundColor Red }
     } while ($null -eq $overwriteData)
+
+    # Pick up the previous settings before the task gets replaced. Settings.json is written by
+    # the settings menu; installs made by older versions only have the task arguments.
+    $previousSettings = $null
+    $settingsJsonPath = Join-Path $logsDir 'Settings.json'
+    if (Test-Path $settingsJsonPath) {
+        $previousSettings = try { Get-Content $settingsJsonPath -Raw | ConvertFrom-Json } catch { $null }
+    }
+    if (-not $previousSettings) {
+        $prevArgs = $null
+        if (Test-Path $launcherPath) {
+            $vbs = Get-Content $launcherPath -Raw
+            if ($vbs -match 'shell\.Run "powershell\.exe (.+)", 0') { $prevArgs = $Matches[1] -replace '""', '"' }
+        }
+        if (-not $prevArgs -and $task) { $prevArgs = $task.Actions[0].Arguments }
+        if ($prevArgs) {
+            $previousSettings = [PSCustomObject]@{}
+            if ($prevArgs -match '-Market\s+(\S+)')             { $previousSettings | Add-Member -NotePropertyName Market            -NotePropertyValue $Matches[1] }
+            if ($prevArgs -match '-Resolution\s+(\S+)')         { $previousSettings | Add-Member -NotePropertyName Resolution        -NotePropertyValue $Matches[1] }
+            if ($prevArgs -match '-SetLockScreen')              { $previousSettings | Add-Member -NotePropertyName LockScreen        -NotePropertyValue $true }
+            if ($prevArgs -match '-LockScreenTimeout\s+(\d+)')  { $previousSettings | Add-Member -NotePropertyName LockScreenTimeout -NotePropertyValue ([int]$Matches[1]) }
+            if ($prevArgs -match '-LogCap\s+(\S+)')             { $previousSettings | Add-Member -NotePropertyName LogCap            -NotePropertyValue $Matches[1] }
+            if ($prevArgs -match '-CheckInterval\s+(\d+)')      { $previousSettings | Add-Member -NotePropertyName CheckInterval     -NotePropertyValue ([int]$Matches[1]) }
+            if ($prevArgs -match '-CheckWindowStart\s+(\d+)')   { $previousSettings | Add-Member -NotePropertyName CheckWindowStart  -NotePropertyValue ([int]$Matches[1]) }
+            if ($prevArgs -match '-CheckWindowEnd\s+(\d+)')     { $previousSettings | Add-Member -NotePropertyName CheckWindowEnd    -NotePropertyValue ([int]$Matches[1]) }
+            if ($prevArgs -match '-Shuffle(\s|$)')              { $previousSettings | Add-Member -NotePropertyName Shuffle           -NotePropertyValue $true }
+            if ($prevArgs -match '-ShuffleInterval\s+(\d+)')    { $previousSettings | Add-Member -NotePropertyName ShuffleInterval   -NotePropertyValue ([int]$Matches[1]) }
+        }
+    }
+    if ($previousSettings -and @($previousSettings.PSObject.Properties).Count -gt 0) {
+        $keepSettings = $null
+        do {
+            Write-Host "  Keep existing settings (market, resolution, lock screen, intervals, shuffle)? [Y/n]: " -NoNewline
+            $raw = (Read-Host).Trim().ToLower()
+            if ($raw -in $yesValues -or $raw -eq '') { $keepSettings = $true }
+            elseif ($raw -in $noValues)              { $keepSettings = $false }
+            else { Write-Host '  Please enter yes or no.' -ForegroundColor Red }
+        } while ($null -eq $keepSettings)
+        if (-not $keepSettings) { $previousSettings = $null }
+    } else {
+        $previousSettings = $null
+    }
     Write-Host ''
 } else {
-    $overwriteData = $false
+    $overwriteData    = $false
+    $previousSettings = $null
 }
+
+# Effective settings for this install: defaults, overlaid with previous settings, overlaid with explicit parameters
+$cfg = @{ Market = 'en-US'; Resolution = ''; LockScreen = $null; LockScreenTimeout = 10; LogCap = '0'; CheckInterval = 60; CheckWindowStart = 0; CheckWindowEnd = 0; Shuffle = $false; ShuffleInterval = 15 }
+if ($previousSettings) {
+    $cfg.LockScreen = $false   # only non-default values are stored, so a missing key means the default
+    foreach ($p in $previousSettings.PSObject.Properties) { if ($cfg.ContainsKey($p.Name)) { $cfg[$p.Name] = $p.Value } }
+}
+if ($PSBoundParameters.ContainsKey('Market'))     { $cfg.Market     = $Market }
+if ($PSBoundParameters.ContainsKey('Resolution')) { $cfg.Resolution = $Resolution }
+$cfg.LogCap = [string]$cfg.LogCap
 
 # - Embedded wallpaper script - - - - - - - - - - - - - - - - #
 
@@ -125,6 +178,7 @@ param(
     [string]$Market = 'en-US',
     [string]$Resolution = '',
     [switch]$SetLockScreen,
+    [int]$LockScreenTimeout = 0,   # applied by the installer and settings menu via powercfg; accepted here so the task arguments are valid
     [string]$LogCap = '0',
     [int]$CheckInterval = 60,
     [int]$CheckWindowStart = 0,
@@ -621,12 +675,25 @@ $logFile        = Join-Path $InstallDir 'Data\Run.log'
 $statsFile      = Join-Path $InstallDir 'Data\Stats.json'
 $manifestFile   = Join-Path $InstallDir 'Data\Wallpapers.json'
 $updateFile     = Join-Path $InstallDir 'Data\UpdateInfo.json'
+$settingsFile   = Join-Path $InstallDir 'Data\Settings.json'
 $startupBatPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'BingWallpaper.bat'
 $yesValues      = @('yes','y','1','ja','a','aa')
 $noValues       = @('no','n','0','nej','ne','nee')
 
 $script:cachedConfig    = $null
 $script:updateAvailable = $null
+
+# Settings.json keeps a copy of everything the user changed from the defaults, so a reinstall
+# or upgrade can restore it. The scheduled task arguments remain the source at run time.
+$settingsDefaults = @{ Market = 'en-US'; Resolution = ''; LockScreen = $false; LockScreenTimeout = 10; LogCap = '0'; CheckInterval = 60; CheckWindowStart = 0; CheckWindowEnd = 0; Shuffle = $false; ShuffleInterval = 15 }
+function Save-Settings($market, $resolution, $lockScreen, $logCap, $checkInterval, $checkWindowStart, $checkWindowEnd, $shuffle, $shuffleInterval, $lockScreenTimeout) {
+    $values = @{ Market = $market; Resolution = $resolution; LockScreen = [bool]$lockScreen; LockScreenTimeout = [int]$lockScreenTimeout; LogCap = [string]$logCap; CheckInterval = [int]$checkInterval; CheckWindowStart = [int]$checkWindowStart; CheckWindowEnd = [int]$checkWindowEnd; Shuffle = [bool]$shuffle; ShuffleInterval = [int]$shuffleInterval }
+    $out = [ordered]@{}
+    foreach ($k in @('Market','Resolution','LockScreen','LockScreenTimeout','LogCap','CheckInterval','CheckWindowStart','CheckWindowEnd','Shuffle','ShuffleInterval')) {
+        if ($values[$k] -ne $settingsDefaults[$k]) { $out[$k] = $values[$k] }
+    }
+    try { Save-JsonFile ([PSCustomObject]$out) $settingsFile 2 } catch {}
+}
 
 function Invoke-WithSpinner {
     param(
@@ -760,6 +827,7 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
         $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         try {
             Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -EA Stop | Out-Null
+            Save-Settings $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval $lockScreenTimeout
             return $true
         } catch {
             Write-Host "  Error updating task: $_" -ForegroundColor Red
@@ -769,6 +837,7 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
         $psArgs = Build-Args $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval $lockScreenTimeout
         Set-Content -Path $launcherPath   -Value (Build-VbsContent $psArgs) -Encoding ASCII
         Set-Content -Path $startupBatPath -Value "@echo off`r`nwscript.exe `"$launcherPath`"" -Encoding ASCII
+        Save-Settings $market $resolution $lockScreen $logCap $checkInterval $checkWindowStart $checkWindowEnd $shuffle $shuffleInterval $lockScreenTimeout
         return $true
     } else {
         Write-Host '  Error: no autostart method found.' -ForegroundColor Red
@@ -1152,6 +1221,7 @@ function Invoke-Uninstall {
     $manifestPath = Join-Path $dataPath 'Wallpapers.json'
     $updatePath   = Join-Path $dataPath 'UpdateInfo.json'
     $historyPath  = Join-Path $dataPath 'ShuffleHistory.json'
+    $settingsPath = Join-Path $dataPath 'Settings.json'
     $tmpBat = Join-Path $env:TEMP "bws_cleanup_$([System.IO.Path]::GetRandomFileName() -replace '\..*').bat"
     $cmds = @("timeout /t 3 /nobreak >nul", "del /f /q `"$batPath`"", "rmdir /s /q `"$scriptsPath`"")
     if ($deleteLog -eq 'Y' -and $deleteStats -eq 'Y') { $cmds += "rmdir /s /q `"$dataPath`"" }
@@ -1161,6 +1231,7 @@ function Invoke-Uninstall {
         $cmds += "del /f /q `"$manifestPath`""
         $cmds += "del /f /q `"$updatePath`""
         $cmds += "del /f /q `"$historyPath`""
+        $cmds += "del /f /q `"$settingsPath`""
     }
     $cmds += "del /f /q `"$tmpBat`""
     Set-Content $tmpBat -Value ($cmds -join "`r`n") -Encoding ASCII
@@ -1826,33 +1897,64 @@ try {
     Write-Host "Step 2: Scripts written."
 
     Write-Host ""
+    if ($previousSettings) {
+        $summary = @()
+        $summary += "market $($cfg.Market)"
+        $summary += "resolution $(if ($cfg.Resolution) { $cfg.Resolution } else { 'auto-detect' })"
+        if ($cfg.CheckInterval -ne 60) { $summary += "check every $($cfg.CheckInterval) min" }
+        if ($cfg.CheckWindowStart -ne 0 -or $cfg.CheckWindowEnd -ne 0) { $summary += "check hours $($cfg.CheckWindowStart)-$($cfg.CheckWindowEnd)" }
+        if ($cfg.LogCap -ne '0') { $summary += "log cap $($cfg.LogCap)" }
+        if ($cfg.Shuffle) { $summary += "shuffle every $($cfg.ShuffleInterval) min" }
+        Write-Host "  Restoring previous settings: $($summary -join ', ')." -ForegroundColor DarkGray
+        Write-Host ""
+    }
+
+    # Lock screen: default to the previous choice when there is one, otherwise yes
+    $lockDefault = if ($null -ne $cfg.LockScreen) { [bool]$cfg.LockScreen } else { $true }
+    $lockPrompt  = if ($lockDefault) { '[Y/n]' } else { '[y/N]' }
     $setLockScreen = $null
     do {
-        Write-Host "  Also update lock screen wallpaper? [Y/n]: " -NoNewline
+        Write-Host "  Also update lock screen wallpaper? ${lockPrompt}: " -NoNewline
         $raw = (Read-Host).Trim().ToLower()
-        if ($raw -in $yesValues -or $raw -eq '') { $setLockScreen = $true }
-        elseif ($raw -in $noValues)              { $setLockScreen = $false }
+        if ($raw -eq '')                { $setLockScreen = $lockDefault }
+        elseif ($raw -in $yesValues)    { $setLockScreen = $true }
+        elseif ($raw -in $noValues)     { $setLockScreen = $false }
         else { Write-Host '  Please enter yes or no.' -ForegroundColor Red }
     } while ($null -eq $setLockScreen)
 
-    $setLockScreenTimeout = 10
+    $timeoutDefault = if ([int]$cfg.LockScreenTimeout -ge 1 -and [int]$cfg.LockScreenTimeout -le 120) { [int]$cfg.LockScreenTimeout } else { 10 }
+    $setLockScreenTimeout = $timeoutDefault
     if ($setLockScreen) {
         do {
-            Write-Host "  How long should the lock screen wallpaper stay visible before the screen turns off? (minutes, plugged in) [10]: " -NoNewline
+            Write-Host "  How long should the lock screen wallpaper stay visible before the screen turns off? (minutes, plugged in) [$timeoutDefault]: " -NoNewline
             $raw = (Read-Host).Trim()
-            if ($raw -eq '') { $setLockScreenTimeout = 10; break }
+            if ($raw -eq '') { $setLockScreenTimeout = $timeoutDefault; break }
             elseif ($raw -match '^\d+$' -and [int]$raw -ge 1 -and [int]$raw -le 120) { $setLockScreenTimeout = [int]$raw; break }
-            else { Write-Host '  Enter a number between 1 and 120, or press Enter for 10 minutes.' -ForegroundColor Red }
+            else { Write-Host "  Enter a number between 1 and 120, or press Enter for $timeoutDefault minutes." -ForegroundColor Red }
         } while ($true)
         Write-Host "  On battery, Windows decides when to turn off the screen. You can adjust both in Settings > [L] Lock screen." -ForegroundColor DarkGray
     }
     Write-Host ""
+    $cfg.LockScreen        = $setLockScreen
+    $cfg.LockScreenTimeout = $setLockScreenTimeout
 
-    $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $Market"
-    if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution $Resolution" }
-    if ($setLockScreen) { $psArgs += ' -SetLockScreen' }
-    if ($setLockScreen -and $setLockScreenTimeout -gt 0) { $psArgs += " -LockScreenTimeout $setLockScreenTimeout" }
+    $psArgs   = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $($cfg.Market)"
+    if ($cfg.Resolution)                                        { $psArgs += " -Resolution $($cfg.Resolution)" }
+    if ($cfg.LockScreen)                                        { $psArgs += ' -SetLockScreen' }
+    if ($cfg.LockScreen -and $cfg.LockScreenTimeout -gt 0)      { $psArgs += " -LockScreenTimeout $($cfg.LockScreenTimeout)" }
+    if ($cfg.LogCap -ne '0')                                    { $psArgs += " -LogCap $($cfg.LogCap)" }
+    if ($cfg.CheckInterval -ne 60)                              { $psArgs += " -CheckInterval $($cfg.CheckInterval)" }
+    if ($cfg.CheckWindowStart -ne 0 -or $cfg.CheckWindowEnd -ne 0) { $psArgs += " -CheckWindowStart $($cfg.CheckWindowStart) -CheckWindowEnd $($cfg.CheckWindowEnd)" }
+    if ($cfg.Shuffle)                                           { $psArgs += " -Shuffle -ShuffleInterval $($cfg.ShuffleInterval)" }
     Set-Content -Path $launcherPath -Value (Build-VbsContent $psArgs) -Encoding Unicode -ErrorAction Stop
+
+    # Persist the non-default settings so the next reinstall or upgrade can restore them
+    $settingsOut = [ordered]@{}
+    $settingsDefaults = @{ Market = 'en-US'; Resolution = ''; LockScreen = $false; LockScreenTimeout = 10; LogCap = '0'; CheckInterval = 60; CheckWindowStart = 0; CheckWindowEnd = 0; Shuffle = $false; ShuffleInterval = 15 }
+    foreach ($k in @('Market','Resolution','LockScreen','LockScreenTimeout','LogCap','CheckInterval','CheckWindowStart','CheckWindowEnd','Shuffle','ShuffleInterval')) {
+        if ($cfg[$k] -ne $settingsDefaults[$k]) { $settingsOut[$k] = $cfg[$k] }
+    }
+    try { Save-JsonFile ([PSCustomObject]$settingsOut) (Join-Path $logsDir 'Settings.json') 2 } catch {}
     $taskName = 'BingWallpaperSetter'
     $taskDone = $false
 
@@ -1864,7 +1966,8 @@ try {
 
     try {
         $runLevel  = if ($setLockScreen) { 'Highest' } else { 'Limited' }
-        $interval  = $CheckInterval
+        $interval  = if ($cfg.Shuffle) { [int]$cfg.ShuffleInterval } else { [int]$cfg.CheckInterval }
+        if ($interval -lt 1) { $interval = 60 }
         $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$launcherPath`""
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
@@ -1914,4 +2017,87 @@ try {
         Write-InstallLog 'Check: BingWallpaper.ps1 exists ... NOT FOUND'
     }
 
-    $checks
+    $checks++
+    if (Test-Path $settingsPs1) {
+        Write-InstallLog 'Check: Settings.ps1 exists ... OK'; $passed++
+    } else {
+        Write-InstallLog 'Check: Settings.ps1 exists ... NOT FOUND'
+    }
+
+    $checks++
+    if (Test-Path $settingsBat) {
+        Write-InstallLog 'Check: Settings.bat exists ... OK'; $passed++
+    } else {
+        Write-InstallLog 'Check: Settings.bat exists ... NOT FOUND'
+    }
+
+    $checks++
+    $verifyTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($verifyTask) {
+        Write-InstallLog "Check: Scheduled task ($($verifyTask.State)) ... OK"; $passed++
+    } elseif (Test-Path $startupBatPath) {
+        Write-InstallLog 'Check: Scheduled task ... NOT FOUND (startup folder active)'; $passed++
+    } else {
+        Write-InstallLog 'Check: Autostart ... NOT CONFIGURED'
+    }
+
+    if ($verifyTask) {
+        $checks++
+        $vbsOk = (Test-Path $launcherPath) -and ((Get-Content $launcherPath -Raw) -match [regex]::Escape($scriptPath))
+        if ($vbsOk) {
+            Write-InstallLog 'Check: Launcher script path matches ... OK'; $passed++
+        } else {
+            Write-InstallLog 'Check: Launcher script path ... MISMATCH or launcher missing'
+        }
+    }
+
+    $s35Ps.Stop(); $s35Ps.Dispose(); $s35Rs.Close(); $s35Rs.Dispose()
+    [console]::Write("`r                             `r")
+    if ($passed -eq $checks) {
+        Write-InstallLog "Verification passed ($passed/$checks)"
+        Write-Host "Step 3.5: Verification passed ($passed/$checks)."
+    } else {
+        Write-InstallLog "Verification completed with warnings ($passed/$checks)"
+        Write-Host "Step 3.5: Verification warnings ($passed/$checks) - check the log." -ForegroundColor Yellow
+    }
+    Write-Host ""
+
+    $s4Rs = [runspacefactory]::CreateRunspace(); $s4Rs.Open()
+    $s4Ps = [powershell]::Create(); $s4Ps.Runspace = $s4Rs
+    $s4Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 4: Downloading wallpaper $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
+    $s4Ps.BeginInvoke() | Out-Null
+    Start-Sleep -Milliseconds 80
+    $firstRun = @{ Market = $cfg.Market; Install = $true }
+    if ($cfg.Resolution) { $firstRun.Resolution = $cfg.Resolution }
+    if ($setLockScreen)  { $firstRun.SetLockScreen = $true }
+    & $scriptPath @firstRun 6>$null
+    $s4Ps.Stop(); $s4Ps.Dispose(); $s4Rs.Close(); $s4Rs.Dispose()
+    [console]::Write("`r                                     `r")
+    $lastLog = if (Test-Path $logFile) { Get-Content $logFile | Select-Object -Last 1 } else { '' }
+    if ($lastLog -match 'Network unavailable at install time') {
+        Write-Host "Step 4: Network unavailable, will retry at logon." -ForegroundColor Yellow
+    } else {
+        $dlTitle = if ($lastLog -match '"([^"]+)"') { $Matches[1] } else { $null }
+        Write-Host "Step 4: Wallpaper set." -ForegroundColor Green
+        if ($dlTitle) { Write-Host "  $dlTitle" -ForegroundColor DarkGray }
+    }
+
+    if ($setLockScreen -and $setLockScreenTimeout -gt 0) {
+        try {
+            $secs = $setLockScreenTimeout * 60
+            powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO 8EC4B3A5-6868-48c2-BE75-4F3044BE88A7 $secs | Out-Null
+            powercfg /setactive SCHEME_CURRENT | Out-Null
+        } catch {}
+    }
+
+    Write-Host ""
+    Write-Host "  Installation successful!" -ForegroundColor Green
+    Write-Host ""
+    Read-Host "  Press Enter to close"
+
+} catch {
+    Write-Host ""
+    Write-Host "ERROR: $_" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "  Press Enter to close"
+}
