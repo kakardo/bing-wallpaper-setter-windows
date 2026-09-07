@@ -18,7 +18,10 @@ param(
 
 # Self-elevate if not running as administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $psArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Market `"$Market`" -Resolution `"$Resolution`""
+    # Only forward parameters the user actually gave, otherwise the defaults would override restored settings
+    $psArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    if ($PSBoundParameters.ContainsKey('Market'))     { $psArgs += " -Market `"$Market`"" }
+    if ($PSBoundParameters.ContainsKey('Resolution')) { $psArgs += " -Resolution `"$Resolution`"" }
     Start-Process powershell.exe $psArgs -Verb RunAs
     exit
 }
@@ -365,9 +368,10 @@ function Invoke-HistoryCatchUp {
 # Exit early if outside check window or today's wallpaper is already set
 if (-not $Install) {
     try {
+        $outsideWindow = $false
         if ($CheckWindowStart -ne 0 -or $CheckWindowEnd -ne 0) {
             $currentHour = (Get-Date).Hour
-            if ($currentHour -lt $CheckWindowStart -or $currentHour -gt $CheckWindowEnd) { exit }
+            if ($currentHour -lt $CheckWindowStart -or $currentHour -gt $CheckWindowEnd) { $outsideWindow = $true }
         }
         $earlyStats = Read-JsonFile $statsFile
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
@@ -387,6 +391,8 @@ if (-not $Install) {
                 if ($storedRes -and $storedRes -ne $Resolution) { $resolutionChanged = $true }
             }
         } catch {}
+        # Outside the check hours only a monitor change gets through: re-applying today's file needs no download
+        if ($outsideWindow -and -not ($todayDone -and $monitorsChanged)) { exit }
         if ($todayDone -and -not $Shuffle -and -not $monitorsChanged -and -not $resolutionChanged -and -not $CatchUpOnly) { exit }
     } catch {}
 }
@@ -806,6 +812,24 @@ function Build-VbsContent($psArgs) {
     return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
 }
 
+# Event trigger so docking or waking runs the check within seconds instead of at the next hourly tick.
+# Fires on a device being started (Kernel-PnP 410, covers monitors) and on resume from sleep (Kernel-Power 107/507).
+# The script itself decides whether anything changed, so extra firings cost one quick early exit.
+# Returns $null if the CIM class is unavailable (old Windows); callers then fall back to logon plus interval.
+function New-DisplayChangeTrigger {
+    try {
+        $class = Get-CimClass -ClassName MSFT_TaskEventTrigger -Namespace Root/Microsoft/Windows/TaskScheduler -EA Stop
+        $trig  = New-CimInstance -CimClass $class -ClientOnly
+        $trig.Enabled      = $true
+        $trig.Delay        = 'PT20S'
+        $trig.Subscription = '<QueryList>' +
+            '<Query Id="0" Path="Microsoft-Windows-Kernel-PnP/Configuration"><Select Path="Microsoft-Windows-Kernel-PnP/Configuration">*[System[Provider[@Name=''Microsoft-Windows-Kernel-PnP''] and EventID=410]]</Select></Query>' +
+            '<Query Id="1" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Kernel-Power''] and (EventID=107 or EventID=507)]]</Select></Query>' +
+            '</QueryList>'
+        return $trig
+    } catch { return $null }
+}
+
 function Build-Args($market, $resolution, $lockScreen, $logCap, $checkInterval = 60, $checkWindowStart = 0, $checkWindowEnd = 0, $shuffle = $false, $shuffleInterval = 15, $lockScreenTimeout = 10) {
     $a = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Market $market"
     if ($resolution)                                        { $a += " -Resolution $resolution" }
@@ -834,6 +858,8 @@ function Update-Task($market, $resolution, $lockScreen, $logCap = '0', $checkInt
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
+        $triggerEvent  = New-DisplayChangeTrigger
+        if ($triggerEvent) { $triggers += $triggerEvent }
         $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         try {
             Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -EA Stop | Out-Null
@@ -1371,6 +1397,8 @@ function Try-ScheduledTask {
             $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
             $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
             $triggers      = @($triggerLogon, $triggerHourly)
+            $triggerEvent  = New-DisplayChangeTrigger
+            if ($triggerEvent) { $triggers += $triggerEvent }
             $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
             $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -EA Stop | Out-Null
@@ -1804,6 +1832,21 @@ function Build-VbsContent($psArgs) {
     return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
 }
 
+# Note: identical copy exists in Settings.ps1 content above (search "function New-DisplayChangeTrigger"). Keep both in sync.
+function New-DisplayChangeTrigger {
+    try {
+        $class = Get-CimClass -ClassName MSFT_TaskEventTrigger -Namespace Root/Microsoft/Windows/TaskScheduler -EA Stop
+        $trig  = New-CimInstance -CimClass $class -ClientOnly
+        $trig.Enabled      = $true
+        $trig.Delay        = 'PT20S'
+        $trig.Subscription = '<QueryList>' +
+            '<Query Id="0" Path="Microsoft-Windows-Kernel-PnP/Configuration"><Select Path="Microsoft-Windows-Kernel-PnP/Configuration">*[System[Provider[@Name=''Microsoft-Windows-Kernel-PnP''] and EventID=410]]</Select></Query>' +
+            '<Query Id="1" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Kernel-Power''] and (EventID=107 or EventID=507)]]</Select></Query>' +
+            '</QueryList>'
+        return $trig
+    } catch { return $null }
+}
+
 function Save-JsonFile($obj, $path, $depth = 3) {
     $tmp = "$path.tmp"
     $obj | ConvertTo-Json -Depth $depth | Set-Content $tmp -Encoding UTF8
@@ -1982,6 +2025,8 @@ try {
         $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
         $triggerHourly = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 9999)
         $triggers      = @($triggerLogon, $triggerHourly)
+        $triggerEvent  = New-DisplayChangeTrigger
+        if ($triggerEvent) { $triggers += $triggerEvent }
         $settings      = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
         $principal     = New-ScheduledTaskPrincipal -UserId "$(if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\" })$env:USERNAME" -LogonType Interactive -RunLevel $runLevel
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
