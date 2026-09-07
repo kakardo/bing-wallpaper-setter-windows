@@ -141,8 +141,9 @@ $logPrefix     = if ($Install) { '[INSTALL] ' } else { '' }
 
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13 } catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
 
+# Always load Forms: the monitor fingerprint below needs it even when a fixed resolution is configured
+try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop } catch {}
 if (!$Resolution) {
-    Add-Type -AssemblyName System.Windows.Forms
     $w = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
     $Resolution = if ($w -ge 3840) { '3840x2160' } elseif ($w -ge 1920) { '1920x1080' } else { '1366x768' }
 }
@@ -225,6 +226,18 @@ function New-StatsObject {
 
 function New-ManifestObject {
     [PSCustomObject]@{ Count = 0; HistorySize = 10; History = @(); Wallpapers = @() }
+}
+
+# Windows caches one scaled copy of the lock screen image per monitor resolution and only
+# rebuilds the cache when the registry value changes. Clearing the values before writing them
+# forces a rebuild, so a monitor connected after the image was set gets the current picture.
+function Set-LockScreenImage($path) {
+    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+    if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+    Remove-ItemProperty -Path $regPath -Name 'LockScreenImagePath','LockScreenImageUrl','LockScreenImageStatus' -EA SilentlyContinue
+    Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $path
+    Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $path
+    Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
 }
 
 
@@ -408,7 +421,12 @@ try {
     } else {
         if ($monitorsChanged) {
             [WallpaperHelper]::SetOnAllMonitors($file) | Out-Null
-            Write-Log 'Monitor layout changed | Wallpaper re-applied'
+            if ($SetLockScreen) {
+                try { Set-LockScreenImage $file; Write-Log 'Monitor layout changed | Wallpaper and lock screen re-applied' }
+                catch { Write-Log "Monitor layout changed | Wallpaper re-applied | Lock screen failed - $_" }
+            } else {
+                Write-Log 'Monitor layout changed | Wallpaper re-applied'
+            }
             Write-Host "Monitor layout changed. Wallpaper re-applied."
         } else {
             if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
@@ -428,11 +446,7 @@ try {
     }
     if ($SetLockScreen -and $isNew) {
         try {
-            $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
-            if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
-            Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $file
-            Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $file
-            Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
+            Set-LockScreenImage $file
         } catch {
             Write-Log "Error | Lock screen update failed - $_"
             Write-Host "Warning: could not set lock screen: $_"
@@ -867,6 +881,7 @@ function Show-LockScreenMenu {
                         if ($lsFile) {
                             $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
                             if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+                            Remove-ItemProperty -Path $regPath -Name 'LockScreenImagePath','LockScreenImageUrl','LockScreenImageStatus' -EA SilentlyContinue
                             Set-ItemProperty -Path $regPath -Name 'LockScreenImagePath'   -Value $lsFile
                             Set-ItemProperty -Path $regPath -Name 'LockScreenImageUrl'    -Value $lsFile
                             Set-ItemProperty -Path $regPath -Name 'LockScreenImageStatus' -Value 1
