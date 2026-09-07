@@ -233,6 +233,8 @@ if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 try { [DpiHelper]::SetProcessDPIAware() | Out-Null } catch {}
 
 $supportedResolutions = @('1366x768', '1920x1080', '3840x2160')   # ascending
+# Bing names the 4K variant _UHD.jpg; every other size uses the WxH suffix
+function Get-BingSuffix($res) { if ($res -eq '3840x2160') { 'UHD' } else { $res } }
 
 # Auto-detect: pick the resolution needed by the largest connected monitor, so one image
 # looks sharp everywhere. Downscaling is free; upscaling is not.
@@ -336,7 +338,7 @@ function Invoke-HistoryCatchUp {
             if (Test-Path $hFile) { continue }
             if (!(Test-Path $hDir)) { New-Item -ItemType Directory -Path $hDir -Force | Out-Null }
             $hFileTmp = "$hFile.tmp"
-            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_${hRes}.jpg" -OutFile $hFileTmp -TimeoutSec 30 -ErrorAction Stop
+            Invoke-WebRequest "https://www.bing.com$($hImg.urlbase)_$(Get-BingSuffix $hRes).jpg" -OutFile $hFileTmp -TimeoutSec 30 -ErrorAction Stop
             if ((Get-Item $hFileTmp).Length -eq 0) { Remove-Item $hFileTmp; continue }
             $hMagic = [System.IO.File]::ReadAllBytes($hFileTmp)[0..2]
             if ($hMagic[0] -ne 0xFF -or $hMagic[1] -ne 0xD8 -or $hMagic[2] -ne 0xFF) { Remove-Item $hFileTmp; continue }
@@ -454,7 +456,7 @@ try {
         if (!$Install -and !$startedLogged) { Write-Log 'Started'; $startedLogged = $true }
         $fileTmp = "$candidate.tmp"
         try {
-            Invoke-WebRequest "https://www.bing.com$($img.urlbase)_${res}.jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
+            Invoke-WebRequest "https://www.bing.com$($img.urlbase)_$(Get-BingSuffix $res).jpg" -OutFile $fileTmp -TimeoutSec 30 -ErrorAction Stop
             if ((Get-Item $fileTmp).Length -eq 0) { throw 'downloaded file is empty' }
             $magic = [System.IO.File]::ReadAllBytes($fileTmp)[0..2]
             if ($magic[0] -ne 0xFF -or $magic[1] -ne 0xD8 -or $magic[2] -ne 0xFF) { throw 'downloaded file is not a valid JPEG' }
@@ -494,7 +496,9 @@ try {
                 if ($downloaded) { $stats.WallpaperCount++ }
                 $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss'); Path = $file; Requested = $Resolution }
                 $stats.Version          = $scriptVersion
-                $stats.MonitorFingerprint = $currentFingerprint
+                # Only record the layout when every screen got the wallpaper, otherwise the next run retries
+                $expected = try { @([System.Windows.Forms.Screen]::AllScreens).Count } catch { 0 }
+                if ($set -ge $expected) { $stats.MonitorFingerprint = $currentFingerprint } else { Write-Log "Only $set of $expected monitor(s) set, will retry next run" }
                 Save-JsonFile $stats $statsFile
             } catch {}
             try {
@@ -523,15 +527,21 @@ try {
             } catch {}
         }
     } else {
+        $reapplyComplete = $true
         if ($monitorsChanged) {
-            [WallpaperHelper]::SetOnAllMonitors($file) | Out-Null
+            $set = [WallpaperHelper]::SetOnAllMonitors($file)
+            $expected = try { @([System.Windows.Forms.Screen]::AllScreens).Count } catch { 0 }
+            # Right after docking, Windows can still be enumerating displays. If not every screen got the
+            # wallpaper, leave the fingerprint unchanged so the next run tries again.
+            if ($set -lt $expected) { $reapplyComplete = $false }
+            $lsNote = ''
             if ($SetLockScreen) {
-                try { Set-LockScreenImage $file; Write-Log 'Monitor layout changed | Wallpaper and lock screen re-applied' }
-                catch { Write-Log "Monitor layout changed | Wallpaper re-applied | Lock screen failed - $_" }
-            } else {
-                Write-Log 'Monitor layout changed | Wallpaper re-applied'
+                try { Set-LockScreenImage $file; $lsNote = ' and lock screen' }
+                catch { $lsNote = " | Lock screen failed - $_" }
             }
-            Write-Host "Monitor layout changed. Wallpaper re-applied."
+            if ($reapplyComplete) { Write-Log "Monitor layout changed | Wallpaper$lsNote re-applied | Monitors: $set" }
+            else { Write-Log "Monitor layout changed | Wallpaper$lsNote re-applied | Monitors: $set of $expected, will retry next run" }
+            Write-Host "Monitor layout changed. Wallpaper re-applied on $set monitor(s)."
         } else {
             if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
             Write-Host "Wallpaper is already up to date."
@@ -544,7 +554,7 @@ try {
             if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
             $stats.LastRun  = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
             $stats.Version  = $scriptVersion
-            if ($monitorsChanged) { $stats.MonitorFingerprint = $currentFingerprint }
+            if ($monitorsChanged -and $reapplyComplete) { $stats.MonitorFingerprint = $currentFingerprint }
             # Remember what was asked for, so an unavailable resolution is not retried every hour
             if ($stats.LastDownloaded) {
                 if ($stats.LastDownloaded.PSObject.Properties['Requested']) { $stats.LastDownloaded.Requested = $Resolution }
