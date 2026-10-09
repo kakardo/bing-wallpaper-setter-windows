@@ -64,7 +64,7 @@ This is expected. The EXE is unsigned (no paid code-signing certificate), so Win
 ### 2a. Overview
 
 - Downloads the daily Bing wallpaper at logon, then checks hourly until the day's image is available.
-- Updates the wallpaper on all connected monitors. Reapplies the wallpaper (and lock screen, if enabled) about 20 seconds after a monitor is connected or the PC wakes from sleep, and again at the hourly check if a screen was missed, so switching docking stations does not leave new screens blank or showing an old picture.
+- Updates the wallpaper on all connected monitors. A small background watcher reapplies the current wallpaper (and lock screen, if enabled) a few seconds after screens are connected, disconnected or switched (docking station, KVM) or the PC wakes from sleep, and checks once more 30 seconds later for screens that came up late. The hourly check also catches any screen that was missed, at any time of day and without waiting for the next Bing image, so new screens are never left black or showing an old picture.
 - Saves wallpapers organised by year and month under `Pictures\BingWallpaper\Wallpapers\`. You can also add your own images here and shuffle will pick them up automatically.
 - Keeps a run log, stats and your settings under `Pictures\BingWallpaper\Data\`. Settings you have changed from the defaults are saved to `Settings.json`, and a reinstall or upgrade offers to keep them (installs made by older versions are read from the existing scheduled task instead).
 - Optional lock screen wallpaper update (primary monitor only). Configurable display timeout for when the PC is plugged in; battery follows Windows default.

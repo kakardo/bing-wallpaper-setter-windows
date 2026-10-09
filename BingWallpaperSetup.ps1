@@ -61,6 +61,7 @@ $installDir  = Join-Path $pictures 'BingWallpaper'
 $scriptsDir  = Join-Path $installDir 'Scripts'
 $scriptPath   = Join-Path $scriptsDir 'BingWallpaper.ps1'
 $launcherPath = Join-Path $scriptsDir 'BingWallpaperLauncher.vbs'
+$watcherPath  = Join-Path $scriptsDir 'BingWallpaperWatcher.ps1'
 $settingsBat  = Join-Path $installDir 'Settings.bat'
 $settingsPs1 = Join-Path $scriptsDir 'Settings.ps1'
 $logsDir     = Join-Path $installDir 'Data'
@@ -190,7 +191,8 @@ param(
     [int]$ShuffleInterval = 15,
     [switch]$Install,
     [switch]$CatchUpOnly,
-    [int]$CatchUpDays = 0
+    [int]$CatchUpDays = 0,
+    [switch]$DisplayChange   # started by the display watcher: only re-apply the current wallpaper, no download
 )
 
 $scriptVersion = '2.9'
@@ -229,7 +231,30 @@ $wpCode = 'using System; using System.Runtime.InteropServices; ' +
                 'if (r.right - r.left > 0 && r.bottom - r.top > 0) { ' +
                     'dw.SetWallpaper(dw.GetMonitorDevicePathAt(i), path); active++; } ' +
                 '} catch { } } ' +
-            'return active; } catch { return 0; } } }'
+            'return active; } catch { return 0; } } ' +
+        # Active monitors only: Windows keeps entries for monitors that are no longer attached, with an empty rectangle
+        'static System.Collections.Generic.List<string> ActiveIds(IDesktopWallpaper dw) { ' +
+            'var ids = new System.Collections.Generic.List<string>(); uint count = dw.GetMonitorDevicePathCount(); ' +
+            'for (uint i = 0; i < count; i++) { ' +
+                'try { string id = dw.GetMonitorDevicePathAt(i); RECT r; dw.GetMonitorRECT(id, out r); ' +
+                'if (r.right - r.left > 0 && r.bottom - r.top > 0) { ids.Add(id); } } catch { } } ' +
+            'return ids; } ' +
+        'public static int CountActive() { ' +
+            'try { return ActiveIds((IDesktopWallpaper)(new DesktopWallpaperClass())).Count; } catch { return 0; } } ' +
+        # Device path plus position and size of every active monitor. The device path changes when a KVM
+        # or dock switches to a different screen, even one with the same resolution.
+        'public static string GetFingerprint() { ' +
+            'try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); ' +
+            'var parts = new System.Collections.Generic.List<string>(); ' +
+            'foreach (string id in ActiveIds(dw)) { RECT r; dw.GetMonitorRECT(id, out r); ' +
+                'parts.Add(id.ToUpperInvariant() + "=" + (r.right - r.left) + "x" + (r.bottom - r.top) + "+" + r.left + "+" + r.top); } ' +
+            'parts.Sort(StringComparer.Ordinal); return String.Join("|", parts.ToArray()); } catch { return ""; } } ' +
+        # Active monitors that report no wallpaper at all, which is what a newly attached screen shows as black
+        'public static int CountUnset() { ' +
+            'try { IDesktopWallpaper dw = (IDesktopWallpaper)(new DesktopWallpaperClass()); int n = 0; ' +
+            'foreach (string id in ActiveIds(dw)) { string wp = null; try { wp = dw.GetWallpaper(id); } catch { } ' +
+                'if (String.IsNullOrEmpty(wp)) { n++; } } ' +
+            'return n; } catch { return 0; } } }'
 if (-not ('WallpaperHelper' -as [type])) { Add-Type -TypeDefinition $wpCode }
 
 # Without this, Screen.Bounds reports scaled sizes (a 4K monitor at 150% shows as 2560 wide)
@@ -365,6 +390,91 @@ function Invoke-HistoryCatchUp {
     if ($added -gt 0) { Write-Log "History: $added wallpaper(s) added to library" }
 }
 
+function Get-MonitorFingerprint {
+    $fp = [WallpaperHelper]::GetFingerprint()
+    if (!$fp) {
+        try { $fp = ([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y } | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)+$($_.Bounds.X)+$($_.Bounds.Y)" }) -join '|' } catch { $fp = '' }
+    }
+    return $fp
+}
+
+function Get-ActiveMonitorCount {
+    $n = [WallpaperHelper]::CountActive()
+    if ($n -le 0) { $n = try { @([System.Windows.Forms.Screen]::AllScreens).Count } catch { 0 } }
+    return $n
+}
+
+# Stores the wallpaper that was just put on screen, so a later monitor change re-applies the same picture
+# (today's image or the current shuffle pick).
+function Save-LastApplied($path, $fingerprint = $null) {
+    try {
+        $st = Read-JsonFile $statsFile (New-StatsObject)
+        $st | Add-Member -NotePropertyName LastApplied -NotePropertyValue $path -Force
+        if ($null -ne $fingerprint) { $st | Add-Member -NotePropertyName MonitorFingerprint -NotePropertyValue $fingerprint -Force }
+        Save-JsonFile $st $statsFile
+    } catch {}
+}
+
+# Re-applies the current wallpaper on every active monitor. Needs no network, so it also runs outside the check hours.
+# Returns $true when every screen got the wallpaper. Otherwise the stored layout is left as it was so the next run tries again.
+function Invoke-MonitorReapply($path) {
+    $set      = [WallpaperHelper]::SetOnAllMonitors($path)
+    $expected = Get-ActiveMonitorCount
+    $complete = ($set -gt 0) -and ($set -ge $expected) -and ([WallpaperHelper]::CountUnset() -eq 0)
+    $lsNote = ''
+    if ($SetLockScreen) {
+        try { Set-LockScreenImage $path; $lsNote = ' and lock screen' }
+        catch { $lsNote = " | Lock screen failed - $_" }
+    }
+    if ($complete) {
+        Save-LastApplied $path (Get-MonitorFingerprint)
+        Write-Log "Monitor layout changed | Wallpaper$lsNote re-applied | Monitors: $set"
+    } else {
+        Write-Log "Monitor layout changed | Wallpaper$lsNote re-applied | Monitors: $set of $expected, will retry"
+    }
+    return $complete
+}
+
+# The display watcher is a small background process that starts a quick monitor check whenever screens are
+# connected, disconnected or rearranged, or Windows resumes. Windows does not log an event for a known monitor
+# being reconnected, so the scheduled task cannot catch a dock or KVM switch on its own.
+$watcherMutexName = 'Local\BingWallpaperSetterWatcher'
+function Test-DisplayWatcher {
+    $m = $null
+    try {
+        if ([System.Threading.Mutex]::TryOpenExisting($watcherMutexName, [ref]$m)) { $m.Dispose(); return $true }
+        return $false
+    } catch { return $true }   # access denied: a watcher started at a higher run level is holding it
+}
+function Start-DisplayWatcher([int]$waitForOldSeconds = 0) {
+    $watcherPath = Join-Path $PSScriptRoot 'BingWallpaperWatcher.ps1'
+    if (!(Test-Path $watcherPath)) { return }
+    # After a reinstall the old watcher notices its file changed and exits within a few seconds
+    for ($i = 0; $i -lt $waitForOldSeconds -and (Test-DisplayWatcher); $i++) { Start-Sleep -Seconds 1 }
+    if (Test-DisplayWatcher) { return }
+    try {
+        Start-Process powershell.exe -ArgumentList "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watcherPath`"" -WindowStyle Hidden -WorkingDirectory $env:TEMP -ErrorAction Stop
+        Write-Log 'Display watcher started'
+    } catch { Write-Log "Error | Display watcher could not start - $_" }
+}
+
+# One run at a time, so a watcher-started check and the hourly check never write the same files at once.
+# Not taken during install: the installer runs this script in its own process, which stays open afterwards.
+$runMutex = $null
+if (-not $Install) {
+    try {
+        $runMutex = [System.Threading.Mutex]::new($false, 'Local\BingWallpaperSetterRun')
+        try { if (-not $runMutex.WaitOne([TimeSpan]::FromMinutes(4))) { Write-Log 'Skipped | Another run is still busy'; exit } }
+        catch [System.Threading.AbandonedMutexException] {}
+    } catch {}
+}
+
+if (-not $DisplayChange -and -not $CatchUpOnly) {
+    Start-DisplayWatcher -waitForOldSeconds $(if ($Install) { 15 } else { 0 })
+}
+
+$currentFingerprint = Get-MonitorFingerprint
+
 # Exit early if outside check window or today's wallpaper is already set
 if (-not $Install) {
     try {
@@ -374,15 +484,23 @@ if (-not $Install) {
             if ($currentHour -lt $CheckWindowStart -or $currentHour -gt $CheckWindowEnd) { $outsideWindow = $true }
         }
         $earlyStats = Read-JsonFile $statsFile
+        # LastDownloaded.Date is Bing's image date. Until Bing publishes the new image it is still yesterday's.
         $todayDone = $earlyStats -and $earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Date -eq (Get-Date).ToString('yyyy-MM-dd')
         $monitorsChanged = $false
         $resolutionChanged = $false
-        $currentFingerprint = ''
         try {
-            $currentFingerprint = ([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y } | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)+$($_.Bounds.X)+$($_.Bounds.Y)" }) -join '|'
-            if ($todayDone) {
+            # The monitor check must not depend on today's image: docking in the morning, before Bing has
+            # published, would otherwise leave new screens black until the next image arrives.
+            $appliedFile = $null
+            if ($earlyStats) {
+                if ($earlyStats.PSObject.Properties['LastApplied'] -and $earlyStats.LastApplied -and (Test-Path -LiteralPath $earlyStats.LastApplied)) { $appliedFile = $earlyStats.LastApplied }
+                elseif ($earlyStats.LastDownloaded -and $earlyStats.LastDownloaded.Path -and (Test-Path -LiteralPath $earlyStats.LastDownloaded.Path)) { $appliedFile = $earlyStats.LastDownloaded.Path }
+            }
+            if ($appliedFile) {
                 $storedFingerprint = if ($earlyStats.PSObject.Properties['MonitorFingerprint']) { $earlyStats.MonitorFingerprint } else { '' }
-                if ($currentFingerprint -ne $storedFingerprint) { $monitorsChanged = $true }
+                if ($currentFingerprint -ne $storedFingerprint -or [WallpaperHelper]::CountUnset() -gt 0) { $monitorsChanged = $true }
+            }
+            if ($todayDone) {
                 # Resolution last asked for (not necessarily the one Bing had). Falls back to the filename for stats written by older versions.
                 $ld = $earlyStats.LastDownloaded
                 $storedRes = if ($ld.PSObject.Properties['Requested'] -and $ld.Requested) { $ld.Requested }
@@ -390,10 +508,15 @@ if (-not $Install) {
                              else { '' }
                 if ($storedRes -and $storedRes -ne $Resolution) { $resolutionChanged = $true }
             }
+            if ($monitorsChanged) {
+                Invoke-MonitorReapply $appliedFile | Out-Null
+                $monitorsChanged = $false
+            }
         } catch {}
-        # Outside the check hours only a monitor change gets through: re-applying today's file needs no download
-        if ($outsideWindow -and -not ($todayDone -and $monitorsChanged)) { exit }
-        if ($todayDone -and -not $Shuffle -and -not $monitorsChanged -and -not $resolutionChanged -and -not $CatchUpOnly) { exit }
+        # A watcher-started check only goes on to the network when the new screens need a larger image
+        if ($DisplayChange -and -not ($todayDone -and $resolutionChanged -and -not $outsideWindow)) { exit }
+        if ($outsideWindow) { exit }
+        if ($todayDone -and -not $Shuffle -and -not $resolutionChanged -and -not $CatchUpOnly) { exit }
     } catch {}
 }
 
@@ -501,10 +624,11 @@ try {
                 $stats.LastRun      = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
                 if ($downloaded) { $stats.WallpaperCount++ }
                 $stats.LastDownloaded = [PSCustomObject]@{ Title = $title; Date = $date; Time = $now.ToString('HH:mm:ss'); Path = $file; Requested = $Resolution }
+                $stats | Add-Member -NotePropertyName LastApplied -NotePropertyValue $file -Force
                 $stats.Version          = $scriptVersion
                 # Only record the layout when every screen got the wallpaper, otherwise the next run retries
-                $expected = try { @([System.Windows.Forms.Screen]::AllScreens).Count } catch { 0 }
-                if ($set -ge $expected) { $stats.MonitorFingerprint = $currentFingerprint } else { Write-Log "Only $set of $expected monitor(s) set, will retry next run" }
+                $expected = Get-ActiveMonitorCount
+                if ($set -ge $expected) { $stats.MonitorFingerprint = Get-MonitorFingerprint } else { Write-Log "Only $set of $expected monitor(s) set, will retry next run" }
                 Save-JsonFile $stats $statsFile
             } catch {}
             try {
@@ -533,25 +657,9 @@ try {
             } catch {}
         }
     } else {
-        $reapplyComplete = $true
-        if ($monitorsChanged) {
-            $set = [WallpaperHelper]::SetOnAllMonitors($file)
-            $expected = try { @([System.Windows.Forms.Screen]::AllScreens).Count } catch { 0 }
-            # Right after docking, Windows can still be enumerating displays. If not every screen got the
-            # wallpaper, leave the fingerprint unchanged so the next run tries again.
-            if ($set -lt $expected) { $reapplyComplete = $false }
-            $lsNote = ''
-            if ($SetLockScreen) {
-                try { Set-LockScreenImage $file; $lsNote = ' and lock screen' }
-                catch { $lsNote = " | Lock screen failed - $_" }
-            }
-            if ($reapplyComplete) { Write-Log "Monitor layout changed | Wallpaper$lsNote re-applied | Monitors: $set" }
-            else { Write-Log "Monitor layout changed | Wallpaper$lsNote re-applied | Monitors: $set of $expected, will retry next run" }
-            Write-Host "Monitor layout changed. Wallpaper re-applied on $set monitor(s)."
-        } else {
-            if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
-            Write-Host "Wallpaper is already up to date."
-        }
+        # Monitor changes are handled before the network check (Invoke-MonitorReapply), so nothing to apply here
+        if ($Install) { Write-Log 'Already up to date | Wallpaper and lock screen skipped' } else { Write-Log 'Started | Already up to date' }
+        Write-Host "Wallpaper is already up to date."
         try {
             $stats = Read-JsonFile $statsFile (New-StatsObject)
             $now   = Get-Date
@@ -560,7 +668,6 @@ try {
             if ($stats.LastRun.Date -ne $today) { $stats.WallpapersSet++ }
             $stats.LastRun  = [PSCustomObject]@{ Date = $today; Time = $now.ToString('HH:mm:ss') }
             $stats.Version  = $scriptVersion
-            if ($monitorsChanged -and $reapplyComplete) { $stats.MonitorFingerprint = $currentFingerprint }
             # Remember what was asked for, so an unavailable resolution is not retried every hour
             if ($stats.LastDownloaded) {
                 if ($stats.LastDownloaded.PSObject.Properties['Requested']) { $stats.LastDownloaded.Requested = $Resolution }
@@ -613,6 +720,7 @@ try {
                         if ($sStats) {
                             if (-not $sStats.PSObject.Properties['TimesShuffled']) { $sStats | Add-Member -NotePropertyName TimesShuffled -NotePropertyValue 0 -Force }
                             $sStats.TimesShuffled++
+                            $sStats | Add-Member -NotePropertyName LastApplied -NotePropertyValue $shuffleFile -Force
                             Save-JsonFile $sStats $statsFile
                         }
                     } catch {}
@@ -639,6 +747,76 @@ try {
     if ($fileTmp -and (Test-Path $fileTmp)) { Remove-Item $fileTmp -EA SilentlyContinue }
     exit
 }
+'@
+
+# - Embedded display watcher - - - - - - - - - - - - - - - - #
+
+$watcherScript = @'
+# @author      Kardo Rostam
+# @date        2026-10-09
+# @description Runs hidden in the background and starts a quick monitor check in BingWallpaper.ps1 when
+#              screens are connected, disconnected or rearranged (dock, KVM) or Windows resumes from sleep.
+#              Started and kept alive by BingWallpaper.ps1. Exits on its own when the scripts are removed or replaced.
+
+$created = $false
+try { $mutex = [System.Threading.Mutex]::new($true, 'Local\BingWallpaperSetterWatcher', [ref]$created) } catch { exit }
+if (-not $created) { exit }
+
+$launcherPath = Join-Path $PSScriptRoot 'BingWallpaperLauncher.vbs'
+$selfPath     = $PSCommandPath
+$selfStamp    = (Get-Item -LiteralPath $selfPath).LastWriteTimeUtc
+
+Add-Type -AssemblyName System.Windows.Forms
+if (-not ('DisplayChangeWindow' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition (
+        'using System; using System.Windows.Forms; ' +
+        'public class DisplayChangeWindow : NativeWindow { ' +
+            'public bool Pending; public DateTime LastEvent = DateTime.MinValue; ' +
+            # An invisible top-level window: message-only windows do not receive broadcasts
+            'public DisplayChangeWindow() { CreateHandle(new CreateParams()); } ' +
+            'protected override void WndProc(ref Message m) { ' +
+                # WM_DISPLAYCHANGE, WM_DEVICECHANGE with DBT_DEVNODES_CHANGED, WM_POWERBROADCAST with PBT_APMRESUMEAUTOMATIC
+                'if (m.Msg == 0x007E || (m.Msg == 0x0219 && m.WParam.ToInt64() == 0x0007) || (m.Msg == 0x0218 && m.WParam.ToInt64() == 0x0012)) { ' +
+                    'Pending = true; LastEvent = DateTime.UtcNow; } ' +
+                'base.WndProc(ref m); } }')
+}
+
+function Start-MonitorCheck {
+    if (!(Test-Path -LiteralPath $launcherPath)) { return }
+    # Same arguments as the scheduled task, so market, resolution and lock screen settings are respected
+    $vbs = Get-Content -LiteralPath $launcherPath -Raw
+    if ($vbs -notmatch 'shell\.Run "powershell\.exe (.+)", 0') { return }
+    $psArgs = ($Matches[1] -replace '""', '"') + ' -DisplayChange'
+    try { Start-Process powershell.exe -ArgumentList $psArgs -WindowStyle Hidden -WorkingDirectory $env:TEMP -ErrorAction Stop } catch {}
+}
+
+$window     = New-Object DisplayChangeWindow
+$quietSecs  = 5                      # wait until the screens stop changing before checking
+$settleSecs = 30                     # check once more afterwards, for screens that came up late
+$settleAt   = [DateTime]::MaxValue
+$nextHealth = [DateTime]::UtcNow
+
+while ($true) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 250
+    $now = [DateTime]::UtcNow
+    if ($now -ge $nextHealth) {
+        $nextHealth = $now.AddSeconds(10)
+        $selfItem = Get-Item -LiteralPath $selfPath -ErrorAction SilentlyContinue
+        if (!$selfItem -or $selfItem.LastWriteTimeUtc -ne $selfStamp -or !(Test-Path -LiteralPath $launcherPath)) { break }
+    }
+    if ($window.Pending -and ($now - $window.LastEvent).TotalSeconds -ge $quietSecs) {
+        $window.Pending = $false
+        $settleAt = $now.AddSeconds($settleSecs)
+        Start-MonitorCheck
+    } elseif ($now -ge $settleAt) {
+        $settleAt = [DateTime]::MaxValue
+        Start-MonitorCheck
+    }
+}
+
+try { $window.DestroyHandle() } catch {}
+try { $mutex.ReleaseMutex() } catch {}
 '@
 
 # - Embedded Settings.bat - - - - - - - - - - - - - - - - - - #
@@ -812,8 +990,9 @@ function Build-VbsContent($psArgs) {
     return 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "powershell.exe ' + $escaped + '", 0, False'
 }
 
-# Event trigger so docking or waking runs the check within seconds instead of at the next hourly tick.
-# Fires on a device being started (Kernel-PnP 410, covers monitors) and on resume from sleep (Kernel-Power 107/507).
+# Event trigger so new devices or waking run the check within seconds instead of at the next hourly tick.
+# Fires on a device being started for the first time (Kernel-PnP 410) and on resume from sleep (Kernel-Power 107/507).
+# Windows logs nothing when a known monitor is reconnected, so docks and KVM switches are caught by the display watcher.
 # The script itself decides whether anything changed, so extra firings cost one quick early exit.
 # Returns $null if the CIM class is unavailable (old Windows); callers then fall back to logon plus interval.
 function New-DisplayChangeTrigger {
@@ -1942,6 +2121,7 @@ try {
     $s2Ps.BeginInvoke() | Out-Null
     Start-Sleep -Milliseconds 80
     Set-Content -Path $scriptPath   -Value $wallpaperScript    -Encoding UTF8  -ErrorAction Stop
+    Set-Content -Path $watcherPath  -Value $watcherScript      -Encoding UTF8  -ErrorAction Stop
     Set-Content -Path $settingsBat  -Value $settingsBatContent -Encoding ASCII -ErrorAction Stop
     Set-Content -Path $settingsPs1  -Value $settingsPs1Content -Encoding UTF8  -ErrorAction Stop
     if ((Get-Item $scriptPath).Length -eq 0) { throw "BingWallpaper.ps1 was written but is empty." }
@@ -2084,6 +2264,13 @@ try {
         Write-InstallLog 'Check: Settings.bat exists ... OK'; $passed++
     } else {
         Write-InstallLog 'Check: Settings.bat exists ... NOT FOUND'
+    }
+
+    $checks++
+    if (Test-Path $watcherPath) {
+        Write-InstallLog 'Check: BingWallpaperWatcher.ps1 exists ... OK'; $passed++
+    } else {
+        Write-InstallLog 'Check: BingWallpaperWatcher.ps1 exists ... NOT FOUND'
     }
 
     $checks++
