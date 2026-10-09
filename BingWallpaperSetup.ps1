@@ -1,6 +1,5 @@
 # @author      Kardo Rostam
 # @date        2026-04-28
-# @version     2.9
 # @description Setup and management tool for Bing Wallpaper Setter.
 #              Installs on first run. Shows status and options if already installed.
 #
@@ -15,6 +14,10 @@ param(
     [ValidateSet('1920x1080','1366x768','3840x2160')]
     [string]$Resolution = '1920x1080'
 )
+
+# The only place to set the version. It is written into BingWallpaper.ps1 at install time,
+# and the release workflow checks that the tag matches it.
+$installerVersion = '3.0'
 
 # Self-elevate if not running as administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -53,7 +56,6 @@ try {
     [void][W.K]::SetConsoleMode($h, $m -band -bnot 0x0040)
 } catch {}
 
-$installerVersion = '2.9'
 $pictures = [Environment]::GetFolderPath('MyPictures')
 if (!$pictures -or !(Test-Path $pictures)) { $pictures = Join-Path $env:USERPROFILE 'Pictures' }
 if (!$pictures -or !(Test-Path $pictures)) { New-Item -ItemType Directory -Path $pictures -Force | Out-Null }
@@ -195,7 +197,7 @@ param(
     [switch]$DisplayChange   # started by the display watcher: only re-apply the current wallpaper, no download
 )
 
-$scriptVersion = '2.9'
+$scriptVersion = '__VERSION__'   # replaced with $installerVersion by the installer
 $logPrefix     = if ($Install) { '[INSTALL] ' } else { '' }
 
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13 } catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
@@ -2120,7 +2122,7 @@ try {
     $s2Ps.AddScript({ $chars = @('|', '/', '-', '\'); $i = 0; while ($true) { [console]::Write("`r  Step 2: Writing scripts $($chars[$i++ % 4])"); Start-Sleep -Milliseconds 120 } }) | Out-Null
     $s2Ps.BeginInvoke() | Out-Null
     Start-Sleep -Milliseconds 80
-    Set-Content -Path $scriptPath   -Value $wallpaperScript    -Encoding UTF8  -ErrorAction Stop
+    Set-Content -Path $scriptPath   -Value $wallpaperScript.Replace('__VERSION__', $installerVersion) -Encoding UTF8 -ErrorAction Stop
     Set-Content -Path $watcherPath  -Value $watcherScript      -Encoding UTF8  -ErrorAction Stop
     Set-Content -Path $settingsBat  -Value $settingsBatContent -Encoding ASCII -ErrorAction Stop
     Set-Content -Path $settingsPs1  -Value $settingsPs1Content -Encoding UTF8  -ErrorAction Stop

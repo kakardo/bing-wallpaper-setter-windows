@@ -14,6 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check that the tag matches the script version
+        shell: powershell
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $line = Select-String -Path .\BingWallpaperSetup.ps1 -Pattern "^\`$installerVersion = '([^']+)'" | Select-Object -First 1
+          if (-not $line) { throw 'installerVersion not found in BingWallpaperSetup.ps1' }
+          $scriptVersion = $line.Matches[0].Groups[1].Value
+          if ($scriptVersion -ne $tag) { throw "Tag v$tag does not match installerVersion $scriptVersion in BingWallpaperSetup.ps1" }
+
       - name: Install ps2exe
         shell: powershell
         run: Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
